@@ -353,6 +353,22 @@ if view_selection == "📊 Simple Action View":
         
         # Traffic Light UI Logic
         is_buy = (ai_prob > 55 and macro_safe)
+        
+        # Explain AI Reasoning to avoid dissonance
+        if not is_buy:
+            if not macro_safe:
+                ai_reasoning = "<b>AI Verdict:</b> Avoiding due to dangerous macroeconomic conditions (S&P 500 in downtrend)."
+            elif "Bullish" in trend:
+                if row['rsi_14'] > 60:
+                    ai_reasoning = "<b>AI Verdict:</b> The trend is bullish, but the stock is currently overextended. Buying now carries a high risk of a pullback. The AI is holding cash and waiting for a safer entry."
+                else:
+                    ai_reasoning = "<b>AI Verdict:</b> The trend is bullish, but the mathematical setup lacks the required 3:1 reward-to-risk ratio. The AI requires a stronger statistical edge to authorize a buy."
+            elif "Bearish" in trend:
+                ai_reasoning = "<b>AI Verdict:</b> The stock is in a confirmed downtrend. The AI will not attempt to 'catch a falling knife' until momentum reverses."
+            else:
+                ai_reasoning = "<b>AI Verdict:</b> The stock is moving sideways with no clear momentum. The AI is holding cash until a breakout is confirmed."
+        else:
+            ai_reasoning = "<b>AI Verdict:</b> Statistical edge confirmed. High probability of an asymmetric breakout."
         if is_buy:
             signal = "🟢 BUY NOW"
             bg_color = "#e6f4ea" # Light green
@@ -366,6 +382,14 @@ if view_selection == "📊 Simple Action View":
                     <h1 style="color: {text_color}; margin: 10px 0;">{signal}</h1>
                     <p style="color: #202124; font-size: 14px; margin-top: 15px;"><b>Trend:</b> {trend}</p>
                     <p style="color: #5f6368; font-size: 13px;">{driver}</p>
+                    <hr style="border-color: {border_color}; margin: 10px 0;">
+                    <p style="color: #202124; font-size: 13px; line-height: 1.4;">{ai_reasoning}</p>
+                    <div style="margin-top: 15px;">
+                        <p style="color: #202124; font-size: 13px; font-weight: bold; margin: 0 0 5px 0;">AI Buy Confidence: {ai_prob:.1f}%</p>
+                        <div style="background-color: #dadce0; border-radius: 4px; width: 100%; height: 8px;">
+                            <div style="background-color: {text_color}; width: {ai_prob}%; height: 100%; border-radius: 4px;"></div>
+                        </div>
+                    </div>
                     <h3 style="color: #202124; margin: 15px 0 5px 0;">🎯 SELL AT: ${take_profit:.2f}</h3>
                     <h3 style="color: #202124; margin: 5px 0;">🛡️ STOP LOSS: ${stop_loss:.2f}</h3>
                     <p style="color: #5f6368; font-size: 15px; margin-top: 15px;"><b>⏳ Est. Exit Date:</b> {estimated_exit}</p>
@@ -382,6 +406,14 @@ if view_selection == "📊 Simple Action View":
                     <h1 style="color: {text_color}; margin: 10px 0; font-size: 28px;">{signal}</h1>
                     <p style="color: #202124; font-size: 14px; margin-top: 15px;"><b>Trend:</b> {trend}</p>
                     <p style="color: #5f6368; font-size: 13px;">{driver}</p>
+                    <hr style="border-color: {border_color}; margin: 10px 0;">
+                    <p style="color: #202124; font-size: 13px; line-height: 1.4;">{ai_reasoning}</p>
+                    <div style="margin-top: 15px;">
+                        <p style="color: #202124; font-size: 13px; font-weight: bold; margin: 0 0 5px 0;">AI Buy Confidence: {ai_prob:.1f}%</p>
+                        <div style="background-color: #dadce0; border-radius: 4px; width: 100%; height: 8px;">
+                            <div style="background-color: {text_color}; width: {ai_prob}%; height: 100%; border-radius: 4px;"></div>
+                        </div>
+                    </div>
                 </div>
             """
         
@@ -399,11 +431,6 @@ if view_selection == "📊 Simple Action View":
                 if st.button(f"📥 Add {ticker} to Portfolio", key=f"add_{ticker}", use_container_width=True):
                     log_trade(ticker, latest_date, entry_price, take_profit, stop_loss, quantity=1.0, is_ai_managed=True)
                     st.success(f"{ticker} logged to Portfolio! Go to the Active Portfolio tab to track it.")
-            
-            # AI Confidence Bar
-            with st.expander("See AI Confidence 📊"):
-                st.markdown(f"**AI Buy Confidence:** {ai_prob:.1f}%")
-                st.progress(int(ai_prob))
                 
         col_idx += 1
 
@@ -426,12 +453,13 @@ elif view_selection == "💼 Active Portfolio":
             if st.form_submit_button("Import to Portfolio", type="primary", use_container_width=True):
                 tp, sl = 0.0, 0.0
                 if imp_ai:
-                    # Get current ATR to calculate algorithmic targets for the legacy position
+                    # Get current ATR and Live Price to calculate algorithmic targets from TODAY'S baseline
                     live_row = df_latest[df_latest['ticker'] == imp_ticker]
                     if not live_row.empty:
                         atr = live_row['atr_percent'].iloc[0]
-                        tp = imp_price * (1 + (atr * 2.0))
-                        sl = imp_price * (1 - (atr * 1.0))
+                        live_price_for_calc = live_row['close'].iloc[0]
+                        tp = live_price_for_calc * (1 + (atr * 2.0))
+                        sl = live_price_for_calc * (1 - (atr * 1.0))
                 
                 log_trade(imp_ticker, latest_date, imp_price, tp, sl, quantity=imp_qty, is_ai_managed=imp_ai)
                 st.success(f"Successfully imported {imp_qty} shares of {imp_ticker}!")
@@ -492,10 +520,7 @@ elif view_selection == "💼 Active Portfolio":
                     action_signal = "⏳ HOLDING"
                     
                 badge = "🤖 AI Managed"
-                target_html = f"""
-                    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Take-Profit Target:</b> ${tp:.2f}</p>
-                    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Trailing Stop-Loss:</b> ${sl:.2f}</p>
-                """
+                target_html = f"<p style='color: #202124; margin: 5px 0; font-size: 15px;'><b>Take-Profit Target:</b> ${tp:.2f}</p><p style='color: #202124; margin: 5px 0; font-size: 15px;'><b>Trailing Stop-Loss:</b> ${sl:.2f}</p>"
             else:
                 # MANUAL TRACKER LOGIC
                 status_bg = "#f1f3f4" # Gray
@@ -505,19 +530,17 @@ elif view_selection == "💼 Active Portfolio":
                 badge = "👤 Manual Tracking"
                 target_html = "<p style='color: #5f6368; font-size: 14px;'><i>AI is ignoring this stock. Sell whenever you decide.</i></p>"
             
-            html = f"""
-                <div style="background-color: {status_bg}; padding: 20px; border-radius: 12px; border: 1px solid {status_border}; margin-bottom: 10px;">
-                    <div style="background-color: #fff; border: 1px solid {status_border}; padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 12px; color: {status_text}; margin-bottom: 10px;"><b>{badge}</b></div>
-                    <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${live_price:.2f}</span></h2>
-                    <h1 style="color: {status_text}; margin: 10px 0; font-size: 24px;">{action_signal}</h1>
-                    <hr style="border-color: {status_border}; margin: 15px 0;">
-                    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Shares Owned:</b> {qty:.2f} <i>(Valued at ${total_value:,.2f})</i></p>
-                    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Average Entry:</b> ${entry_price:.2f}</p>
-                    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Total Return:</b> <span style="color: {'#137333' if total_profit >= 0 else '#c5221f'}">${total_profit:,.2f} ({pl_percent:.1f}%)</span></p>
-                    <hr style="border-color: {status_border}; margin: 15px 0;">
-                    {target_html}
-                </div>
-            """
+            html = f"""<div style="background-color: {status_bg}; padding: 20px; border-radius: 12px; border: 1px solid {status_border}; margin-bottom: 10px;">
+<div style="background-color: #fff; border: 1px solid {status_border}; padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 12px; color: {status_text}; margin-bottom: 10px;"><b>{badge}</b></div>
+<h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${live_price:.2f}</span></h2>
+<h1 style="color: {status_text}; margin: 10px 0; font-size: 24px;">{action_signal}</h1>
+<hr style="border-color: {status_border}; margin: 15px 0;">
+<p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Shares Owned:</b> {qty:.2f} <i>(Valued at ${total_value:,.2f})</i></p>
+<p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Average Entry:</b> ${entry_price:.2f}</p>
+<p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Total Return:</b> <span style="color: {'#137333' if total_profit >= 0 else '#c5221f'}">${total_profit:,.2f} ({pl_percent:.1f}%)</span></p>
+<hr style="border-color: {status_border}; margin: 15px 0;">
+{target_html}
+</div>"""
             
             with p_cols[p_idx % 3]:
                 st.markdown(html, unsafe_allow_html=True)
