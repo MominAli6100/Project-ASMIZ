@@ -33,6 +33,20 @@ def initialize_database():
         );
     """)
     
+    # Create Active Trades Portfolio Table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS active_trades (
+            ticker VARCHAR PRIMARY KEY,
+            entry_date DATE,
+            entry_price DOUBLE,
+            take_profit DOUBLE,
+            stop_loss DOUBLE,
+            status VARCHAR DEFAULT 'ACTIVE',
+            quantity DOUBLE DEFAULT 1.0,
+            is_ai_managed BOOLEAN DEFAULT TRUE
+        );
+    """)
+    
     print("Database initialized successfully.")
     conn.close()
 

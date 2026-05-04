@@ -39,6 +39,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database', 'quant_data.
 MODEL_DIR = os.path.join(os.path.dirname(__file__), '..', 'models', 'saved')
 MAG_7 = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
 
+# --- DATABASE HELPER FUNCTIONS ---
 def refresh_market_data():
     base_dir = os.path.join(os.path.dirname(__file__), '..')
     scripts = [
@@ -78,6 +79,43 @@ def get_historical_data(ticker, days=90):
         conn.close()
         return pd.DataFrame()
 
+# Portfolio Helpers
+def get_active_trades():
+    conn = duckdb.connect(DB_PATH)
+    try:
+        df = conn.execute("SELECT * FROM active_trades WHERE status = 'ACTIVE'").df()
+    except:
+        df = pd.DataFrame()
+    conn.close()
+    return df
+
+def log_trade(ticker, date, price, tp, sl, quantity=1.0, is_ai_managed=True):
+    conn = duckdb.connect(DB_PATH)
+    conn.execute(f"""
+        INSERT INTO active_trades (ticker, entry_date, entry_price, take_profit, stop_loss, status, quantity, is_ai_managed)
+        VALUES ('{ticker}', '{date}', {price}, {tp}, {sl}, 'ACTIVE', {quantity}, {is_ai_managed})
+        ON CONFLICT (ticker) DO UPDATE SET 
+            entry_date = excluded.entry_date,
+            entry_price = excluded.entry_price,
+            take_profit = excluded.take_profit,
+            stop_loss = excluded.stop_loss,
+            quantity = excluded.quantity,
+            is_ai_managed = excluded.is_ai_managed,
+            status = 'ACTIVE'
+    """)
+    conn.close()
+
+def update_stop_loss(ticker, new_sl):
+    conn = duckdb.connect(DB_PATH)
+    conn.execute(f"UPDATE active_trades SET stop_loss = {new_sl} WHERE ticker = '{ticker}'")
+    conn.close()
+
+def close_trade(ticker, status):
+    conn = duckdb.connect(DB_PATH)
+    conn.execute(f"UPDATE active_trades SET status = '{status}' WHERE ticker = '{ticker}'")
+    conn.close()
+
+# --- NEWS & SENTIMENT HELPER ---
 @st.cache_data(ttl=300) 
 def get_live_news(ticker):
     processed_news = []
@@ -161,6 +199,7 @@ def get_live_news(ticker):
         
     return final_news[:6]
 
+# --- PLOTLY SPARKLINE ---
 def create_sparkline(ticker, current_price, take_profit, stop_loss, is_buy=True):
     hist_df = get_historical_data(ticker)
     if hist_df.empty: return None
@@ -226,6 +265,7 @@ def create_sparkline(ticker, current_price, take_profit, stop_loss, is_buy=True)
     )
     return fig
 
+# --- MAIN UI LAYOUT ---
 with st.sidebar:
     st.title("System Info")
     st.markdown("""
@@ -245,7 +285,7 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Navigation")
-    view_selection = st.radio("Select View", ["📊 Simple Action View", "📰 Live News & Supply Chain"], label_visibility="collapsed")
+    view_selection = st.radio("Select View", ["📊 Simple Action View", "💼 Active Portfolio", "📰 Live News & Supply Chain"], label_visibility="collapsed")
 
 st.title("Magnificent 7 Action Dashboard")
 
@@ -265,10 +305,11 @@ spy_close = df_latest['spy_close'].iloc[0]
 spy_sma = df_latest['spy_sma_200'].iloc[0]
 macro_safe = spy_close > spy_sma
 
-if macro_safe:
-    st.success(f"🟢 **BULLISH MACRO REGIME:** S&P 500 (${spy_close:.2f}) is above its 200-Day Moving Average (${spy_sma:.2f}). Tech buying is authorized.")
-else:
-    st.error(f"🔴 **BEARISH MACRO REGIME:** S&P 500 (${spy_close:.2f}) is below its 200-Day Moving Average (${spy_sma:.2f}). Defensive cash positions enforced.")
+if view_selection != "📰 Live News & Supply Chain":
+    if macro_safe:
+        st.success(f"🟢 **BULLISH MACRO REGIME:** S&P 500 (${spy_close:.2f}) is above its 200-Day Moving Average (${spy_sma:.2f}). Tech buying is authorized.")
+    else:
+        st.error(f"🔴 **BEARISH MACRO REGIME:** S&P 500 (${spy_close:.2f}) is below its 200-Day Moving Average (${spy_sma:.2f}). Defensive cash positions enforced.")
 
 st.divider()
 
@@ -310,7 +351,7 @@ if view_selection == "📊 Simple Action View":
         take_profit = entry_price * (1 + (atr * 2.0))
         stop_loss = entry_price * (1 - (atr * 1.0))
         
-        # Traffic Light UI Logic with Restored Jargon
+        # Traffic Light UI Logic
         is_buy = (ai_prob > 55 and macro_safe)
         if is_buy:
             signal = "🟢 BUY NOW"
@@ -352,6 +393,12 @@ if view_selection == "📊 Simple Action View":
             fig = create_sparkline(ticker, entry_price, take_profit, stop_loss, is_buy=is_buy)
             if fig:
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                
+            # Add to Portfolio Button (Only if it's a BUY)
+            if is_buy:
+                if st.button(f"📥 Add {ticker} to Portfolio", key=f"add_{ticker}", use_container_width=True):
+                    log_trade(ticker, latest_date, entry_price, take_profit, stop_loss, quantity=1.0, is_ai_managed=True)
+                    st.success(f"{ticker} logged to Portfolio! Go to the Active Portfolio tab to track it.")
             
             # AI Confidence Bar
             with st.expander("See AI Confidence 📊"):
@@ -359,6 +406,140 @@ if view_selection == "📊 Simple Action View":
                 st.progress(int(ai_prob))
                 
         col_idx += 1
+
+elif view_selection == "💼 Active Portfolio":
+    st.markdown("### 💼 Your Active Portfolio")
+    
+    # -- IMPORT EXISTING POSITION FORM --
+    with st.expander("➕ Import Existing Stock Position", expanded=False):
+        with st.form("import_form"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                imp_ticker = st.selectbox("Stock", MAG_7)
+            with col2:
+                imp_qty = st.number_input("Quantity of Shares", min_value=0.01, value=10.0, step=1.0)
+            with col3:
+                imp_price = st.number_input("Average Purchase Price ($)", min_value=1.0, value=150.0, step=1.0)
+                
+            imp_ai = st.toggle("🤖 Apply AI Swing Trading Algorithm?", value=True, help="If checked, the AI will mathematically calculate a Take-Profit and Stop-Loss target based on your entry price and tell you when to sell.")
+            
+            if st.form_submit_button("Import to Portfolio", type="primary", use_container_width=True):
+                tp, sl = 0.0, 0.0
+                if imp_ai:
+                    # Get current ATR to calculate algorithmic targets for the legacy position
+                    live_row = df_latest[df_latest['ticker'] == imp_ticker]
+                    if not live_row.empty:
+                        atr = live_row['atr_percent'].iloc[0]
+                        tp = imp_price * (1 + (atr * 2.0))
+                        sl = imp_price * (1 - (atr * 1.0))
+                
+                log_trade(imp_ticker, latest_date, imp_price, tp, sl, quantity=imp_qty, is_ai_managed=imp_ai)
+                st.success(f"Successfully imported {imp_qty} shares of {imp_ticker}!")
+                st.rerun()
+                
+    st.divider()
+
+    portfolio_df = get_active_trades()
+    
+    if portfolio_df.empty:
+        st.info("You currently have no active trades. Go to the 'Simple Action View' to find stocks to buy, or import an existing position above.")
+    else:
+        p_cols = st.columns(3)
+        p_idx = 0
+        for _, trade in portfolio_df.iterrows():
+            ticker = trade['ticker']
+            entry_price = trade['entry_price']
+            tp = trade['take_profit']
+            sl = trade['stop_loss']
+            qty = trade.get('quantity', 1.0)
+            is_ai_managed = trade.get('is_ai_managed', True)
+            
+            # Get current live price from latest data
+            live_row = df_latest[df_latest['ticker'] == ticker]
+            if live_row.empty: continue
+            
+            live_price = live_row['close'].iloc[0]
+            atr = live_row['atr_percent'].iloc[0]
+            
+            profit_loss_per_share = live_price - entry_price
+            total_profit = profit_loss_per_share * qty
+            pl_percent = (profit_loss_per_share / entry_price) * 100
+            total_value = live_price * qty
+            
+            # AI MANAGED vs MANUAL HOLD ROUTING
+            if is_ai_managed:
+                # TRAILING STOP LOGIC
+                new_theoretical_sl = live_price * (1 - (atr * 1.0))
+                if new_theoretical_sl > sl:
+                    update_stop_loss(ticker, new_theoretical_sl)
+                    sl = new_theoretical_sl 
+                    
+                # SELL SIGNALS
+                if live_price >= tp:
+                    status_bg = "#fef7e0" # Gold
+                    status_border = "#fce8b2"
+                    status_text = "#ea8600"
+                    action_signal = "🎯 TARGET HIT. SELL NOW."
+                elif live_price <= sl:
+                    status_bg = "#fce8e6" # Red
+                    status_border = "#fad2cf"
+                    status_text = "#c5221f"
+                    action_signal = "🛡️ STOP LOSS HIT. SELL NOW."
+                else:
+                    status_bg = "#e8f0fe" # Blue
+                    status_border = "#d2e3fc"
+                    status_text = "#1967d2"
+                    action_signal = "⏳ HOLDING"
+                    
+                badge = "🤖 AI Managed"
+                target_html = f"""
+                    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Take-Profit Target:</b> ${tp:.2f}</p>
+                    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Trailing Stop-Loss:</b> ${sl:.2f}</p>
+                """
+            else:
+                # MANUAL TRACKER LOGIC
+                status_bg = "#f1f3f4" # Gray
+                status_border = "#dadce0"
+                status_text = "#5f6368"
+                action_signal = "👤 MANUAL HOLD"
+                badge = "👤 Manual Tracking"
+                target_html = "<p style='color: #5f6368; font-size: 14px;'><i>AI is ignoring this stock. Sell whenever you decide.</i></p>"
+            
+            html = f"""
+                <div style="background-color: {status_bg}; padding: 20px; border-radius: 12px; border: 1px solid {status_border}; margin-bottom: 10px;">
+                    <div style="background-color: #fff; border: 1px solid {status_border}; padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 12px; color: {status_text}; margin-bottom: 10px;"><b>{badge}</b></div>
+                    <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${live_price:.2f}</span></h2>
+                    <h1 style="color: {status_text}; margin: 10px 0; font-size: 24px;">{action_signal}</h1>
+                    <hr style="border-color: {status_border}; margin: 15px 0;">
+                    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Shares Owned:</b> {qty:.2f} <i>(Valued at ${total_value:,.2f})</i></p>
+                    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Average Entry:</b> ${entry_price:.2f}</p>
+                    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Total Return:</b> <span style="color: {'#137333' if total_profit >= 0 else '#c5221f'}">${total_profit:,.2f} ({pl_percent:.1f}%)</span></p>
+                    <hr style="border-color: {status_border}; margin: 15px 0;">
+                    {target_html}
+                </div>
+            """
+            
+            with p_cols[p_idx % 3]:
+                st.markdown(html, unsafe_allow_html=True)
+                
+                # Chart to track progress (Only draw targets if AI managed)
+                if is_ai_managed:
+                    fig = create_sparkline(ticker, live_price, tp, sl, is_buy=True)
+                else:
+                    fig = create_sparkline(ticker, live_price, 0, 0, is_buy=False)
+                    
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                
+                # Close Trade Button
+                btn_type = "primary" if is_ai_managed and (live_price >= tp or live_price <= sl) else "secondary"
+                btn_text = "Close Position" if not is_ai_managed else "Execute Sell Logic"
+                if st.button(btn_text, key=f"close_{ticker}", type=btn_type, use_container_width=True):
+                    close_status = "CLOSED_PROFIT" if total_profit >= 0 else "CLOSED_LOSS"
+                    close_trade(ticker, close_status)
+                    st.rerun()
+                    
+            p_idx += 1
 
 elif view_selection == "📰 Live News & Supply Chain":
     st.markdown("### Live Market Context")
