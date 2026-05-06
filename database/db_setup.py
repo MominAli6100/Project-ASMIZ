@@ -47,6 +47,31 @@ def initialize_database():
         );
     """)
     
+    # Create Dark Pool Blocks Table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS dark_pool_blocks (
+            ticker VARCHAR,
+            datetime TIMESTAMP,
+            volume DOUBLE,
+            price DOUBLE,
+            PRIMARY KEY (ticker, datetime)
+        );
+    """)
+    
+    # Create Options Flow Table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS options_flow (
+            ticker VARCHAR,
+            fetch_time TIMESTAMP,
+            expiration DATE,
+            type VARCHAR,
+            strike DOUBLE,
+            volume DOUBLE,
+            open_interest DOUBLE,
+            sentiment VARCHAR
+        );
+    """)
+    
     print("Database initialized successfully.")
     conn.close()
 

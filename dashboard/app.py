@@ -45,11 +45,12 @@ def refresh_market_data():
     scripts = [
         r"data_ingestion\yfinance_scraper.py",
         r"data_ingestion\fred_scraper.py",
-        r"feature_engineering\build_features.py"
+        r"feature_engineering\build_features.py",
+        r"data_ingestion\whale_scraper.py"
     ]
     my_bar = st.progress(0, text="Starting Live Data Sync...")
     for i, script in enumerate(scripts):
-        my_bar.progress((i + 1) * 33, text=f"Executing {os.path.basename(script)}...")
+        my_bar.progress((i + 1) * 25, text=f"Executing {os.path.basename(script)}...")
         try:
             subprocess.run(["python", os.path.join(base_dir, script)], check=True, capture_output=True)
         except subprocess.CalledProcessError as e:
@@ -59,7 +60,7 @@ def refresh_market_data():
     st.cache_data.clear()
     return True
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=60)
 def get_latest_data():
     conn = duckdb.connect(DB_PATH)
     query = "SELECT * FROM features WHERE date = (SELECT MAX(date) FROM features) ORDER BY ticker"
@@ -67,7 +68,7 @@ def get_latest_data():
     conn.close()
     return df
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=300)
 def get_historical_data(ticker, days=90):
     conn = duckdb.connect(DB_PATH)
     query = f"SELECT date, close FROM features WHERE ticker = '{ticker}' ORDER BY date DESC LIMIT {days}"
@@ -136,19 +137,30 @@ def get_live_news(ticker):
     except Exception as e:
         pass
         
-    # 2. SEC Edgar 8-K
+    # 2. SEC Edgar (All Filings: Form 4, 8-K, 10-Q)
     try:
         feedparser.USER_AGENT = "ThinkBright_Quant_Engine/1.0 (contact@example.com)"
-        sec_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ticker}&type=8-K&output=atom"
+        sec_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ticker}&type=&output=atom"
         sec_feed = feedparser.parse(sec_url)
-        for entry in sec_feed.entries[:2]:
-            processed_news.append({
-                'title': f"SEC Filing (8-K): {entry.title}",
-                'link': entry.link,
-                'publisher': 'SEC Edgar',
-                'pubDate_raw': entry.updated,
-                'source_type': 'SEC Edgar'
-            })
+        for entry in sec_feed.entries[:5]: # Check top 5 recent filings
+            title_upper = entry.title.upper()
+            if "4 -" in title_upper or "FORM 4" in title_upper:
+                processed_news.append({
+                    'title': f"Insider Trade (Form 4): {entry.title}",
+                    'link': entry.link,
+                    'publisher': 'SEC Edgar',
+                    'pubDate_raw': entry.updated,
+                    'source_type': 'SEC Edgar',
+                    'hardcoded_category': '🏛️ Insider Form 4'
+                })
+            elif "8-K" in title_upper:
+                processed_news.append({
+                    'title': f"Major Event (8-K): {entry.title}",
+                    'link': entry.link,
+                    'publisher': 'SEC Edgar',
+                    'pubDate_raw': entry.updated,
+                    'source_type': 'SEC Edgar'
+                })
     except Exception as e:
         pass
 
@@ -178,8 +190,9 @@ def get_live_news(ticker):
         text_to_analyze = item['title'].lower()
         supply_keywords = ['supply chain', 'supplier', 'tsmc', 'foxconn', 'manufacturing', 'shortage', 'logistics', 'tariff', 'production', 'factory', 'freight', 'export', '8-k']
         
-        category = "📰 General News"
-        if any(keyword in text_to_analyze for keyword in supply_keywords): category = "🏭 Supply Chain Update"
+        category = item.get('hardcoded_category', "📰 General News")
+        if category == "📰 General News" and any(keyword in text_to_analyze for keyword in supply_keywords): 
+            category = "🏭 Supply Chain Update"
             
         vs = analyzer.polarity_scores(text_to_analyze)
         compound = vs['compound']
@@ -197,7 +210,18 @@ def get_live_news(ticker):
             'sentiment': sentiment
         })
         
-    return final_news[:6]
+    return final_news[:8]
+
+def get_whale_data(ticker):
+    conn = duckdb.connect(DB_PATH)
+    try:
+        options = conn.execute(f"SELECT * FROM options_flow WHERE ticker = '{ticker}' ORDER BY volume DESC LIMIT 5").df()
+        dark_pools = conn.execute(f"SELECT * FROM dark_pool_blocks WHERE ticker = '{ticker}' ORDER BY datetime DESC LIMIT 3").df()
+    except:
+        options = pd.DataFrame()
+        dark_pools = pd.DataFrame()
+    conn.close()
+    return options, dark_pools
 
 # --- PLOTLY SPARKLINE ---
 def create_sparkline(ticker, current_price, take_profit, stop_loss, is_buy=True):
@@ -275,11 +299,26 @@ with st.sidebar:
     **Auto-Refresh:**
     The dashboard UI and the Live News tab automatically refresh every **5 minutes**.
     """)
+    # Auto-Refresh Logic & Timestamp via Session State (Fixes Infinite Loop Bug)
+    if 'last_market_sync' not in st.session_state:
+        st.session_state.last_market_sync = datetime.now()
+        
+    time_since_update = datetime.now() - st.session_state.last_market_sync
+    
+    if time_since_update.total_seconds() > 300: # 5 minutes
+        st.toast("Auto-syncing live market data in the background...")
+        success = refresh_market_data()
+        if success:
+            st.session_state.last_market_sync = datetime.now()
+        st.rerun()
+
+    st.markdown(f"<div style='padding: 10px; background-color: #e8eaed; border-radius: 8px; text-align: center;'><b style='color: #202124;'>Last DB Sync:</b><br><span style='color: #137333; font-size: 18px;'>{st.session_state.last_market_sync.strftime('%I:%M:%S %p')}</span></div>", unsafe_allow_html=True)
     
     if st.button("🔄 Force Market Sync", use_container_width=True, type="primary"):
         with st.spinner("Re-syncing AI..."):
             success = refresh_market_data()
         if success:
+            st.session_state.last_market_sync = datetime.now()
             st.success("Successfully updated!")
             st.rerun()
 
@@ -565,16 +604,58 @@ elif view_selection == "💼 Active Portfolio":
             p_idx += 1
 
 elif view_selection == "📰 Live News & Supply Chain":
-    st.markdown("### Live Market Context")
-    st.markdown("This tab automatically pulls, categorizes, and runs sentiment analysis on live headlines every 5 minutes.")
+    st.markdown("### Institutional Whale & News Engine")
+    st.markdown("This tab combines **Proprietary Synthetic Dark Pool Math**, live Options Flow analysis, and SEC Form 4 parsing to track Smart Money activity in real-time.")
     
     for ticker in MAG_7:
-        with st.expander(f"{ticker} - Live News & Supply Chain Updates", expanded=False):
+        with st.expander(f"{ticker} - Whale Tracking & Live News", expanded=False):
+            options_df, dp_df = get_whale_data(ticker)
             articles = get_live_news(ticker)
-            if not articles:
-                st.write("No recent stories found.")
-            else:
-                for article in articles:
-                    st.markdown(f"**[{article['title']}]({article['link']})**")
-                    st.markdown(f"<p style='font-size:13px; color:gray; margin-top:-10px;'><b>{article['category']}</b> • {article['sentiment']} • {article['publisher']} • {article['time']}</p>", unsafe_allow_html=True)
-                    st.markdown("<hr style='margin: 10px 0px; border-top: 1px dashed #e0e0e0;'>", unsafe_allow_html=True)
+            
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown("#### 🐋 Options Flow (Whale Bets)")
+                if not options_df.empty:
+                    for _, row in options_df.iterrows():
+                        color = "#137333" if row['sentiment'] == "BULLISH" else "#c5221f"
+                        st.markdown(f"<div style='border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 10px;'>"
+                                    f"<b>{row['type']} | Strike: ${row['strike']}</b><br>"
+                                    f"<span style='color:gray; font-size: 13px;'>Vol: {int(row['volume']):,} | Open Interest: {int(row['open_interest']):,}</span>"
+                                    f"</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<span style='color:gray; font-size: 14px;'>No unusual options flow detected today.</span>", unsafe_allow_html=True)
+                    
+                st.markdown("<br>#### 🌊 Synthetic Dark Pool", unsafe_allow_html=True)
+                if not dp_df.empty:
+                    for _, row in dp_df.iterrows():
+                        st.markdown(f"<div style='border-left: 4px solid #5f6368; padding-left: 10px; margin-bottom: 10px;'>"
+                                    f"<b>Hidden Block Detected</b><br>"
+                                    f"<span style='color:gray; font-size: 13px;'>Price: ${row['price']:.2f} | Vol: {int(row['volume']):,}</span>"
+                                    f"</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<span style='color:gray; font-size: 14px;'>No hidden liquidity blocks detected.</span>", unsafe_allow_html=True)
+                    
+            with c2:
+                st.markdown("#### 🏛️ SEC Insider Tracking")
+                insider_news = [a for a in articles if a['category'] == '🏛️ Insider Form 4']
+                if insider_news:
+                    for a in insider_news:
+                        st.markdown(f"**[{a['title']}]({a['link']})**")
+                        st.markdown(f"<p style='font-size:12px; color:gray;'>{a['time']}</p>", unsafe_allow_html=True)
+                        st.markdown("<hr style='margin: 5px 0px;'>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<span style='color:gray; font-size: 14px;'>No recent Form 4 insider trades.</span>", unsafe_allow_html=True)
+                    
+            with c3:
+                st.markdown("#### 📰 Fundamental News")
+                gen_news = [a for a in articles if a['category'] != '🏛️ Insider Form 4']
+                if gen_news:
+                    for a in gen_news:
+                        sentiment_color = "gray"
+                        if "Bullish" in a['sentiment']: sentiment_color = "#137333"
+                        elif "Bearish" in a['sentiment']: sentiment_color = "#c5221f"
+                        st.markdown(f"**[{a['title']}]({a['link']})**")
+                        st.markdown(f"<p style='font-size:12px; color:gray;'><b>{a['category']}</b> • <span style='color:{sentiment_color};'>{a['sentiment']}</span> • {a['publisher']}</p>", unsafe_allow_html=True)
+                        st.markdown("<hr style='margin: 5px 0px;'>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<span style='color:gray; font-size: 14px;'>No recent fundamental news.</span>", unsafe_allow_html=True)
