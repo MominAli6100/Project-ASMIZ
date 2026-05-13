@@ -52,19 +52,18 @@ def generate_features():
         );
     """)
     
-    # HOLE FIXED: Incremental Calculation check to prevent re-calculating 15 years daily
-    result = conn.execute("SELECT MAX(date) FROM features").fetchone()
-    last_date = result[0]
-    
-    if last_date:
-        # Fetch data starting 75 calendar days prior to calculate rolling 50-day windows properly
-        query = f"""
-            SELECT * FROM daily_prices 
-            WHERE date >= (DATE '{last_date}' - INTERVAL 75 DAY)
-            ORDER BY ticker, date
-        """
-    else:
-        query = "SELECT * FROM daily_prices ORDER BY ticker, date"
+    # HOLE FIXED: Incremental Calculation check MUST be per-ticker to avoid breaking when adding new stocks
+    query = """
+        SELECT dp.* 
+        FROM daily_prices dp
+        LEFT JOIN (
+            SELECT ticker, MAX(date) as max_date 
+            FROM features 
+            GROUP BY ticker
+        ) f ON dp.ticker = f.ticker
+        WHERE f.max_date IS NULL OR dp.date >= (f.max_date - INTERVAL 75 DAY)
+        ORDER BY dp.ticker, dp.date
+    """
         
     df = conn.execute(query).df()
     

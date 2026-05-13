@@ -15,6 +15,10 @@ import plotly.graph_objects as go
 # Configure page to look clean and wide
 st.set_page_config(page_title="Mag 7 Quant Engine", layout="wide", page_icon="📈")
 
+view_selection = st.radio("Select View", ["📊 Simple Action View", "💼 Active Portfolio", "📈 Performance Analytics", "📰 Live News & Supply Chain"], label_visibility="collapsed", key="main_nav_radio")
+st.divider()
+
+
 # UI Refresh (5 minutes = 300,000 ms)
 st_autorefresh(interval=5 * 60 * 1000, limit=None, key="news_autorefresh")
 
@@ -37,7 +41,21 @@ st.markdown("""
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database', 'quant_data.duckdb')
 MODEL_DIR = os.path.join(os.path.dirname(__file__), '..', 'models', 'saved')
-MAG_7 = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
+ALL_TICKERS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", # Mag 7
+    "ALAB", "AVGO", "MRVL", "AMD", "MU", "PLTR", "ASML", "TSM", "IREN", "CRWV", "CRDO", "TAN", "RKLB", # High Growth Tech
+    "WLKP", "ECL", "LIN", "LXU", "CC", # Chemical/Industrial
+    "SPY", "QQQ", "DIA", "XLF", "COST", "BRK-B" # Standard Market ETFs & Blue Chips
+]
+
+SECTORS = {
+    "All Stocks": ALL_TICKERS,
+    "Magnificent 7": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"],
+    "Semiconductors & AI": ["AMD", "NVDA", "AVGO", "MRVL", "MU", "ASML", "TSM", "ALAB", "CRDO", "PLTR", "CRWV"],
+    "Energy & Aerospace": ["TAN", "IREN", "RKLB"],
+    "Chemicals & Industrials": ["WLKP", "ECL", "LIN", "LXU", "CC"],
+    "Standard ETFs & Blue Chips": ["SPY", "QQQ", "DIA", "XLF", "COST", "BRK-B"]
+}
 
 # --- DATABASE HELPER FUNCTIONS ---
 def refresh_market_data():
@@ -92,23 +110,58 @@ def get_active_trades():
 
 def log_trade(ticker, date, price, tp, sl, quantity=1.0, is_ai_managed=True):
     conn = duckdb.connect(DB_PATH)
-    conn.execute(f"""
-        INSERT INTO active_trades (ticker, entry_date, entry_price, take_profit, stop_loss, status, quantity, is_ai_managed)
-        VALUES ('{ticker}', '{date}', {price}, {tp}, {sl}, 'ACTIVE', {quantity}, {is_ai_managed})
-        ON CONFLICT (ticker) DO UPDATE SET 
-            entry_date = excluded.entry_date,
-            entry_price = excluded.entry_price,
-            take_profit = excluded.take_profit,
-            stop_loss = excluded.stop_loss,
-            quantity = excluded.quantity,
-            is_ai_managed = excluded.is_ai_managed,
-            status = 'ACTIVE'
-    """)
+    
+    # Check if trade already exists to calculate weighted average
+    existing = conn.execute(f"SELECT entry_price, quantity FROM active_trades WHERE ticker = '{ticker}' AND status = 'ACTIVE'").fetchone()
+    
+    if existing:
+        old_price = existing[0]
+        old_qty = existing[1]
+        
+        new_qty = old_qty + quantity
+        new_price = ((old_qty * old_price) + (quantity * price)) / new_qty
+        
+        conn.execute(f"""
+            UPDATE active_trades SET 
+                entry_date = '{date}',
+                entry_price = {new_price},
+                take_profit = {tp},
+                stop_loss = {sl},
+                quantity = {new_qty},
+                is_ai_managed = {is_ai_managed}
+            WHERE ticker = '{ticker}' AND status = 'ACTIVE'
+        """)
+    else:
+        conn.execute(f"""
+            INSERT INTO active_trades (ticker, entry_date, entry_price, take_profit, stop_loss, status, quantity, is_ai_managed)
+            VALUES ('{ticker}', '{date}', {price}, {tp}, {sl}, 'ACTIVE', {quantity}, {is_ai_managed})
+            ON CONFLICT (ticker) DO UPDATE SET 
+                entry_date = excluded.entry_date,
+                entry_price = excluded.entry_price,
+                take_profit = excluded.take_profit,
+                stop_loss = excluded.stop_loss,
+                quantity = excluded.quantity,
+                is_ai_managed = excluded.is_ai_managed,
+                status = 'ACTIVE'
+        """)
     conn.close()
 
 def update_stop_loss(ticker, new_sl):
     conn = duckdb.connect(DB_PATH)
     conn.execute(f"UPDATE active_trades SET stop_loss = {new_sl} WHERE ticker = '{ticker}'")
+    conn.close()
+
+def close_trade_v2(ticker, exit_price):
+    conn = duckdb.connect(DB_PATH)
+    trade = conn.execute(f"SELECT entry_date, entry_price, quantity, is_ai_managed FROM active_trades WHERE ticker = '{ticker}' AND status = 'ACTIVE'").fetchone()
+    if trade:
+        exit_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        pl = (exit_price - trade[1]) * trade[2]
+        pl_pct = ((exit_price - trade[1]) / trade[1]) * 100
+        conn.execute(f"""
+            INSERT INTO closed_trades VALUES ('{ticker}', '{trade[0]}', '{exit_date}', {trade[1]}, {exit_price}, {pl}, {pl_pct}, {trade[2]}, {trade[3]})
+        """)
+        conn.execute(f"DELETE FROM active_trades WHERE ticker = '{ticker}'")
     conn.close()
 
 def close_trade(ticker, status):
@@ -224,7 +277,7 @@ def get_whale_data(ticker):
     return options, dark_pools
 
 # --- PLOTLY SPARKLINE ---
-def create_sparkline(ticker, current_price, take_profit, stop_loss, is_buy=True):
+def create_sparkline(ticker, current_price, take_profit, stop_loss, is_buy=True, expected_days=40):
     hist_df = get_historical_data(ticker)
     if hist_df.empty: return None
         
@@ -253,7 +306,7 @@ def create_sparkline(ticker, current_price, take_profit, stop_loss, is_buy=True)
     if is_buy:
         # Future projection setup
         last_date = pd.to_datetime(hist_df['date'].iloc[-1])
-        future_date = last_date + timedelta(days=40)
+        future_date = last_date + timedelta(days=expected_days)
         
         # Target Line Projection
         fig.add_trace(go.Scatter(
@@ -322,9 +375,11 @@ with st.sidebar:
             st.success("Successfully updated!")
             st.rerun()
 
+    
+    
     st.divider()
-    st.subheader("Navigation")
-    view_selection = st.radio("Select View", ["📊 Simple Action View", "💼 Active Portfolio", "📰 Live News & Supply Chain"], label_visibility="collapsed")
+    selected_sector = st.selectbox("🎯 Filter by Sector:", list(SECTORS.keys()))
+    active_tickers = SECTORS[selected_sector]
 
 st.title("Magnificent 7 Action Dashboard")
 
@@ -344,7 +399,7 @@ spy_close = df_latest['spy_close'].iloc[0]
 spy_sma = df_latest['spy_sma_200'].iloc[0]
 macro_safe = spy_close > spy_sma
 
-if view_selection != "📰 Live News & Supply Chain":
+if st.session_state.main_nav_radio != "📰 Live News & Supply Chain":
     if macro_safe:
         st.success(f"🟢 **BULLISH MACRO REGIME:** S&P 500 (${spy_close:.2f}) is above its 200-Day Moving Average (${spy_sma:.2f}). Tech buying is authorized.")
     else:
@@ -357,11 +412,26 @@ features_cols = [
     'volatility_20d', 'atr_percent', 'spy_sma_200', 'us_10y_yield', 'm2_money_supply'
 ]
 
-if view_selection == "📊 Simple Action View":
+if st.session_state.main_nav_radio == "📊 Simple Action View":
+
+    # PILLAR 4: Market Weather & Expectation Management
+    st.markdown("### 📡 Market Weather")
+    volatility = df_latest['volatility_20d'].iloc[0] * 100
+    if not macro_safe:
+        st.error("🔴 **Macro Status: BEARISH** | The S&P 500 is broken. The AI is highly defensive and will likely reject 95% of setups to hold cash.")
+    elif volatility > 15:
+        st.warning(f"🟡 **Macro Status: CAUTIOUS (High Volatility: {volatility:.1f}%)** | The market is choppy. The AI will only take A+ asymmetric setups.")
+    else:
+        st.success(f"🟢 **Macro Status: CLEAR (Normal Volatility: {volatility:.1f}%)** | Market conditions are prime for quantitative momentum trading.")
+    
+    st.info("💡 **Law of Large Numbers:** Algorithmic edge is invisible in 1 trade. It takes a minimum of **20 to 30 closed trades** for the 79% statistical win rate to reflect in your portfolio balance. Trust the math, not the emotions.")
+    st.divider()
+    
     cols = st.columns(3)
+
     col_idx = 0
     
-    for ticker in MAG_7:
+    for ticker in active_tickers:
         ticker_data = df_latest[df_latest['ticker'] == ticker]
         if ticker_data.empty: continue
             
@@ -390,6 +460,15 @@ if view_selection == "📊 Simple Action View":
         take_profit = entry_price * (1 + (atr * 2.0))
         stop_loss = entry_price * (1 - (atr * 1.0))
         
+        # Dynamic Time Barrier Calculation
+        momentum_per_day = abs(row['return_5d']) / 5.0
+        if pd.isna(momentum_per_day) or momentum_per_day < 0.001: 
+            momentum_per_day = 0.001
+            
+        required_pct_move = (take_profit - entry_price) / entry_price
+        expected_days = int(required_pct_move / momentum_per_day)
+        expected_days = max(4, min(40, expected_days)) # Clamp between 4 and 40 days
+        
         # Traffic Light UI Logic
         is_buy = (ai_prob > 55 and macro_safe)
         
@@ -413,25 +492,27 @@ if view_selection == "📊 Simple Action View":
             bg_color = "#e6f4ea" # Light green
             border_color = "#ceead6"
             text_color = "#137333"
-            estimated_exit = (pd.to_datetime(latest_date) + timedelta(days=40)).strftime('%B %d, %Y')
+            estimated_exit = (pd.to_datetime(latest_date) + timedelta(days=expected_days)).strftime('%B %d, %Y')
             
             action_html = f"""
-                <div style="background-color: {bg_color}; padding: 20px; border-radius: 12px; border: 1px solid {border_color}; margin-bottom: 5px;">
-                    <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${entry_price:.2f}</span></h2>
-                    <h1 style="color: {text_color}; margin: 10px 0;">{signal}</h1>
-                    <p style="color: #202124; font-size: 14px; margin-top: 15px;"><b>Trend:</b> {trend}</p>
-                    <p style="color: #5f6368; font-size: 13px;">{driver}</p>
-                    <hr style="border-color: {border_color}; margin: 10px 0;">
-                    <p style="color: #202124; font-size: 13px; line-height: 1.4;">{ai_reasoning}</p>
-                    <div style="margin-top: 15px;">
+                <div style="background-color: {bg_color}; padding: 20px; border-radius: 12px; border: 1px solid {border_color}; margin-bottom: 5px; height: 650px; display: flex; flex-direction: column; overflow-y: auto;">
+                    <div>
+                        <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${entry_price:.2f}</span></h2>
+                        <h1 style="color: {text_color}; margin: 10px 0;">{signal}</h1>
+                        <p style="color: #202124; font-size: 14px; margin-top: 15px;"><b>Trend:</b> {trend}</p>
+                        <p style="color: #5f6368; font-size: 13px;">{driver}</p>
+                        <hr style="border-color: {border_color}; margin: 10px 0;">
+                        <p style="color: #202124; font-size: 13px; line-height: 1.4;">{ai_reasoning}</p>
+                    </div>
+                    <div style="margin-top: auto;">
                         <p style="color: #202124; font-size: 13px; font-weight: bold; margin: 0 0 5px 0;">AI Buy Confidence: {ai_prob:.1f}%</p>
                         <div style="background-color: #dadce0; border-radius: 4px; width: 100%; height: 8px;">
                             <div style="background-color: {text_color}; width: {ai_prob}%; height: 100%; border-radius: 4px;"></div>
                         </div>
+                        <h3 style="color: #202124; margin: 15px 0 5px 0;">🎯 SELL AT: ${take_profit:.2f}</h3>
+                        <h3 style="color: #202124; margin: 5px 0;">🛡️ STOP LOSS: ${stop_loss:.2f}</h3>
+                        <p style="color: #5f6368; font-size: 15px; margin-top: 15px;"><b>⏳ Est. Exit Date:</b> {estimated_exit}</p>
                     </div>
-                    <h3 style="color: #202124; margin: 15px 0 5px 0;">🎯 SELL AT: ${take_profit:.2f}</h3>
-                    <h3 style="color: #202124; margin: 5px 0;">🛡️ STOP LOSS: ${stop_loss:.2f}</h3>
-                    <p style="color: #5f6368; font-size: 15px; margin-top: 15px;"><b>⏳ Est. Exit Date:</b> {estimated_exit}</p>
                 </div>
             """
         else:
@@ -440,14 +521,16 @@ if view_selection == "📊 Simple Action View":
             border_color = "#fad2cf"
             text_color = "#c5221f"
             action_html = f"""
-                <div style="background-color: {bg_color}; padding: 20px; border-radius: 12px; border: 1px solid {border_color}; margin-bottom: 5px;">
-                    <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${entry_price:.2f}</span></h2>
-                    <h1 style="color: {text_color}; margin: 10px 0; font-size: 28px;">{signal}</h1>
-                    <p style="color: #202124; font-size: 14px; margin-top: 15px;"><b>Trend:</b> {trend}</p>
-                    <p style="color: #5f6368; font-size: 13px;">{driver}</p>
-                    <hr style="border-color: {border_color}; margin: 10px 0;">
-                    <p style="color: #202124; font-size: 13px; line-height: 1.4;">{ai_reasoning}</p>
-                    <div style="margin-top: 15px;">
+                <div style="background-color: {bg_color}; padding: 20px; border-radius: 12px; border: 1px solid {border_color}; margin-bottom: 5px; height: 650px; display: flex; flex-direction: column; overflow-y: auto;">
+                    <div>
+                        <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${entry_price:.2f}</span></h2>
+                        <h1 style="color: {text_color}; margin: 10px 0; font-size: 28px;">{signal}</h1>
+                        <p style="color: #202124; font-size: 14px; margin-top: 15px;"><b>Trend:</b> {trend}</p>
+                        <p style="color: #5f6368; font-size: 13px;">{driver}</p>
+                        <hr style="border-color: {border_color}; margin: 10px 0;">
+                        <p style="color: #202124; font-size: 13px; line-height: 1.4;">{ai_reasoning}</p>
+                    </div>
+                    <div style="margin-top: auto;">
                         <p style="color: #202124; font-size: 13px; font-weight: bold; margin: 0 0 5px 0;">AI Buy Confidence: {ai_prob:.1f}%</p>
                         <div style="background-color: #dadce0; border-radius: 4px; width: 100%; height: 8px;">
                             <div style="background-color: {text_color}; width: {ai_prob}%; height: 100%; border-radius: 4px;"></div>
@@ -461,7 +544,7 @@ if view_selection == "📊 Simple Action View":
             st.markdown(action_html, unsafe_allow_html=True)
             
             # ALWAYS Print the Plotly Chart for visual context
-            fig = create_sparkline(ticker, entry_price, take_profit, stop_loss, is_buy=is_buy)
+            fig = create_sparkline(ticker, entry_price, take_profit, stop_loss, is_buy=is_buy, expected_days=expected_days if is_buy else 40)
             if fig:
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
                 
@@ -473,7 +556,7 @@ if view_selection == "📊 Simple Action View":
                 
         col_idx += 1
 
-elif view_selection == "💼 Active Portfolio":
+elif st.session_state.main_nav_radio == "💼 Active Portfolio":
     st.markdown("### 💼 Your Active Portfolio")
     
     # -- IMPORT EXISTING POSITION FORM --
@@ -481,7 +564,7 @@ elif view_selection == "💼 Active Portfolio":
         with st.form("import_form"):
             col1, col2, col3 = st.columns(3)
             with col1:
-                imp_ticker = st.selectbox("Stock", MAG_7)
+                imp_ticker = st.selectbox("Stock", ALL_TICKERS)
             with col2:
                 imp_qty = st.number_input("Quantity of Shares", min_value=0.01, value=10.0, step=1.0)
             with col3:
@@ -569,16 +652,20 @@ elif view_selection == "💼 Active Portfolio":
                 badge = "👤 Manual Tracking"
                 target_html = "<p style='color: #5f6368; font-size: 14px;'><i>AI is ignoring this stock. Sell whenever you decide.</i></p>"
             
-            html = f"""<div style="background-color: {status_bg}; padding: 20px; border-radius: 12px; border: 1px solid {status_border}; margin-bottom: 10px;">
-<div style="background-color: #fff; border: 1px solid {status_border}; padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 12px; color: {status_text}; margin-bottom: 10px;"><b>{badge}</b></div>
-<h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${live_price:.2f}</span></h2>
-<h1 style="color: {status_text}; margin: 10px 0; font-size: 24px;">{action_signal}</h1>
-<hr style="border-color: {status_border}; margin: 15px 0;">
-<p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Shares Owned:</b> {qty:.2f} <i>(Valued at ${total_value:,.2f})</i></p>
-<p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Average Entry:</b> ${entry_price:.2f}</p>
-<p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Total Return:</b> <span style="color: {'#137333' if total_profit >= 0 else '#c5221f'}">${total_profit:,.2f} ({pl_percent:.1f}%)</span></p>
-<hr style="border-color: {status_border}; margin: 15px 0;">
-{target_html}
+            html = f"""<div style="background-color: {status_bg}; padding: 20px; border-radius: 12px; border: 1px solid {status_border}; margin-bottom: 10px; height: 550px; display: flex; flex-direction: column; overflow-y: auto;">
+<div>
+    <div style="background-color: #fff; border: 1px solid {status_border}; padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 12px; color: {status_text}; margin-bottom: 10px;"><b>{badge}</b></div>
+    <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${live_price:.2f}</span></h2>
+    <h1 style="color: {status_text}; margin: 10px 0; font-size: 24px;">{action_signal}</h1>
+    <hr style="border-color: {status_border}; margin: 15px 0;">
+    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Shares Owned:</b> {qty:.2f} <i>(Valued at ${total_value:,.2f})</i></p>
+    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Average Entry:</b> ${entry_price:.2f}</p>
+    <p style="color: #202124; margin: 5px 0; font-size: 15px;"><b>Total Return:</b> <span style="color: {'#137333' if total_profit >= 0 else '#c5221f'}">${total_profit:,.2f} ({pl_percent:.1f}%)</span></p>
+</div>
+<div style="margin-top: auto;">
+    <hr style="border-color: {status_border}; margin: 15px 0;">
+    {target_html}
+</div>
 </div>"""
             
             with p_cols[p_idx % 3]:
@@ -586,7 +673,13 @@ elif view_selection == "💼 Active Portfolio":
                 
                 # Chart to track progress (Only draw targets if AI managed)
                 if is_ai_managed:
-                    fig = create_sparkline(ticker, live_price, tp, sl, is_buy=True)
+                    # Calculate dynamic days for portfolio chart
+                    momentum_per_day = abs(live_row['return_5d'].iloc[0]) / 5.0
+                    if pd.isna(momentum_per_day) or momentum_per_day < 0.001: momentum_per_day = 0.001
+                    rem_pct = abs(tp - live_price) / live_price
+                    exp_days = int(rem_pct / momentum_per_day)
+                    exp_days = max(4, min(40, exp_days))
+                    fig = create_sparkline(ticker, live_price, tp, sl, is_buy=True, expected_days=exp_days)
                 else:
                     fig = create_sparkline(ticker, live_price, 0, 0, is_buy=False)
                     
@@ -597,17 +690,55 @@ elif view_selection == "💼 Active Portfolio":
                 btn_type = "primary" if is_ai_managed and (live_price >= tp or live_price <= sl) else "secondary"
                 btn_text = "Close Position" if not is_ai_managed else "Execute Sell Logic"
                 if st.button(btn_text, key=f"close_{ticker}", type=btn_type, use_container_width=True):
-                    close_status = "CLOSED_PROFIT" if total_profit >= 0 else "CLOSED_LOSS"
-                    close_trade(ticker, close_status)
+                    close_trade_v2(ticker, live_price)
                     st.rerun()
                     
             p_idx += 1
 
-elif view_selection == "📰 Live News & Supply Chain":
+
+elif st.session_state.main_nav_radio == "📈 Performance Analytics":
+    st.markdown("### 📈 Closed Trades Ledger")
+    st.markdown("This is your quantitative captain's log. True alpha is only visible over large sample sizes.")
+    
+    conn = duckdb.connect(DB_PATH)
+    try:
+        df_closed = conn.execute("SELECT * FROM closed_trades ORDER BY exit_date DESC").df()
+    except:
+        df_closed = pd.DataFrame()
+    conn.close()
+    
+    if df_closed.empty:
+        st.info("No closed trades yet. Follow the AI, take the signals, and build your statistical edge.")
+    else:
+        total_trades = len(df_closed)
+        wins = len(df_closed[df_closed['profit_loss'] > 0])
+        win_rate = (wins / total_trades) * 100
+        net_profit = df_closed['profit_loss'].sum()
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Closed Trades", total_trades)
+        c2.metric("Realized Win Rate", f"{win_rate:.1f}%")
+        c3.metric("Net Realized P&L", f"${net_profit:,.2f}")
+        
+        st.divider()
+        
+        # Cumulative P&L Chart
+        df_closed = df_closed.sort_values('exit_date')
+        df_closed['cumulative_pl'] = df_closed['profit_loss'].cumsum()
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_closed['exit_date'], y=df_closed['cumulative_pl'], mode='lines+markers', line=dict(color='#137333', width=3)))
+        fig.update_layout(title="Cumulative Realized Profit", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_title="Date", yaxis_title="Total Profit ($)")
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.dataframe(df_closed[['ticker', 'entry_date', 'exit_date', 'entry_price', 'exit_price', 'pl_percent', 'profit_loss']], use_container_width=True)
+
+
+elif st.session_state.main_nav_radio == "📰 Live News & Supply Chain":
     st.markdown("### Institutional Whale & News Engine")
     st.markdown("This tab combines **Proprietary Synthetic Dark Pool Math**, live Options Flow analysis, and SEC Form 4 parsing to track Smart Money activity in real-time.")
     
-    for ticker in MAG_7:
+    for ticker in active_tickers:
         with st.expander(f"{ticker} - Whale Tracking & Live News", expanded=False):
             options_df, dp_df = get_whale_data(ticker)
             articles = get_live_news(ticker)

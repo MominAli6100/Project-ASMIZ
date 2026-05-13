@@ -5,7 +5,12 @@ import pandas as pd
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database', 'quant_data.duckdb')
-MAG_7 = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
+ALL_TICKERS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", # Mag 7
+    "ALAB", "AVGO", "MRVL", "AMD", "MU", "PLTR", "ASML", "TSM", "IREN", "CRWV", "CRDO", "TAN", "RKLB", # High Growth Tech
+    "WLKP", "ECL", "LIN", "LXU", "CC", # Chemical/Industrial
+    "SPY", "QQQ", "DIA", "XLF", "COST", "BRK-B" # Standard Market ETFs & Blue Chips
+]
 
 def scrape_whale_data():
     conn = duckdb.connect(DB_PATH)
@@ -13,7 +18,7 @@ def scrape_whale_data():
     
     # 1. Dark Pool Engine (Synthetic Block Detection)
     print("Executing Synthetic Dark Pool Engine...")
-    for ticker in MAG_7:
+    for ticker in ALL_TICKERS:
         try:
             df = yf.download(ticker, period='5d', interval='5m', progress=False)
             if df.empty: continue
@@ -47,7 +52,7 @@ def scrape_whale_data():
     # 2. Options Flow Engine
     print("Executing Unusual Options Flow Engine...")
     conn.execute("DELETE FROM options_flow") # Clear old flow so we only show LIVE data
-    for ticker in MAG_7:
+    for ticker in ALL_TICKERS:
         try:
             tk = yf.Ticker(ticker)
             exps = tk.options

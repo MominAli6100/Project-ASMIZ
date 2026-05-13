@@ -6,7 +6,12 @@ from datetime import datetime, timedelta
 
 # Path to the duckdb database created by db_setup.py
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database', 'quant_data.duckdb')
-MAG_7_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
+ALL_TICKERS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", # Mag 7
+    "ALAB", "AVGO", "MRVL", "AMD", "MU", "PLTR", "ASML", "TSM", "IREN", "CRWV", "CRDO", "TAN", "RKLB", # High Growth Tech
+    "WLKP", "ECL", "LIN", "LXU", "CC", # Chemical/Industrial
+    "SPY", "QQQ", "DIA", "XLF", "COST", "BRK-B" # Standard Market ETFs & Blue Chips
+]
 
 def fetch_and_store_daily_prices():
     """Fetches daily prices from yfinance and stores them in DuckDB."""
@@ -18,7 +23,7 @@ def fetch_and_store_daily_prices():
 
     conn = duckdb.connect(DB_PATH)
     
-    for ticker in MAG_7_TICKERS:
+    for ticker in ALL_TICKERS:
         print(f"Fetching data for {ticker}...")
         
         # Check the most recent date we have for this ticker to avoid re-downloading 15 years
