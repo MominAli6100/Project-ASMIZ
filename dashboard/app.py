@@ -4,6 +4,7 @@ import pandas as pd
 import joblib
 import os
 import subprocess
+import sys
 from datetime import datetime, timedelta
 import yfinance as yf
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -69,16 +70,16 @@ SECTORS = {
 def refresh_market_data():
     base_dir = os.path.join(os.path.dirname(__file__), '..')
     scripts = [
-        r"data_ingestion\yfinance_scraper.py",
-        r"data_ingestion\fred_scraper.py",
-        r"feature_engineering\build_features.py",
-        r"data_ingestion\whale_scraper.py"
+        "data_ingestion/yfinance_scraper.py",
+        "data_ingestion/fred_scraper.py",
+        "feature_engineering/build_features.py",
+        "data_ingestion/whale_scraper.py"
     ]
     my_bar = st.progress(0, text="Starting Live Data Sync...")
     for i, script in enumerate(scripts):
         my_bar.progress((i + 1) * 25, text=f"Executing {os.path.basename(script)}...")
         try:
-            subprocess.run(["python", os.path.join(base_dir, script)], check=True, capture_output=True)
+            subprocess.run([sys.executable, os.path.join(base_dir, script)], check=True, capture_output=True)
         except subprocess.CalledProcessError as e:
             st.error(f"Error running {script}: {e.stderr.decode()}")
             return False
