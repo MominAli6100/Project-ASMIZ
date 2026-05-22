@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import yfinance as yf
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from streamlit_autorefresh import st_autorefresh
@@ -164,7 +165,7 @@ def close_trade_v2(ticker, exit_price):
     conn = get_db_connection()
     trade = conn.execute(f"SELECT entry_date, entry_price, quantity, is_ai_managed FROM active_trades WHERE ticker = '{ticker}' AND status = 'ACTIVE'").fetchone()
     if trade:
-        exit_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        exit_date = datetime.now(ZoneInfo('America/Chicago')).strftime('%Y-%m-%d %H:%M:%S')
         pl = (exit_price - trade[1]) * trade[2]
         pl_pct = ((exit_price - trade[1]) / trade[1]) * 100
         conn.execute(f"""
@@ -363,15 +364,15 @@ with st.sidebar:
     """)
     # Auto-Refresh Logic & Timestamp via Session State (Fixes Infinite Loop Bug)
     if 'last_market_sync' not in st.session_state:
-        st.session_state.last_market_sync = datetime.now()
+        st.session_state.last_market_sync = datetime.now(ZoneInfo('America/Chicago'))
         
-    time_since_update = datetime.now() - st.session_state.last_market_sync
+    time_since_update = datetime.now(ZoneInfo('America/Chicago')) - st.session_state.last_market_sync
     
     if time_since_update.total_seconds() > 300: # 5 minutes
         st.toast("Auto-syncing live market data in the background...")
         success = refresh_market_data()
         if success:
-            st.session_state.last_market_sync = datetime.now()
+            st.session_state.last_market_sync = datetime.now(ZoneInfo('America/Chicago'))
         st.rerun()
 
     st.markdown(f"<div style='padding: 10px; background-color: #e8eaed; border-radius: 8px; text-align: center;'><b style='color: #202124;'>Last DB Sync:</b><br><span style='color: #137333; font-size: 18px;'>{st.session_state.last_market_sync.strftime('%I:%M:%S %p')}</span></div>", unsafe_allow_html=True)
@@ -380,7 +381,7 @@ with st.sidebar:
         with st.spinner("Re-syncing AI..."):
             success = refresh_market_data()
         if success:
-            st.session_state.last_market_sync = datetime.now()
+            st.session_state.last_market_sync = datetime.now(ZoneInfo('America/Chicago'))
             st.success("Successfully updated!")
             st.rerun()
 
