@@ -39,7 +39,15 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database', 'quant_data.duckdb')
+# Try to get MotherDuck token from secrets (Streamlit Cloud) or environment variable (Local)
+try:
+    MD_TOKEN = st.secrets["MOTHERDUCK_TOKEN"]
+except:
+    MD_TOKEN = os.environ.get("MOTHERDUCK_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6Im1vbWluYWxpMDVAZ21haWwuY29tIiwibWRSZWdpb24iOiJhd3MtdXMtZWFzdC0xIiwic2Vzc2lvbiI6Im1vbWluYWxpMDUuZ21haWwuY29tIiwicGF0IjoibGRwVDBFR2Y4RXFjQjNjWGF0Uko5YXNNYkVwT0hiMXBTNmpiMFdUTzB2ayIsInVzZXJJZCI6IjcxYWRlNjBmLTI2ZDctNGE1MS1iMzkwLTVhYzEzMjUxYjcwYiIsImlzcyI6Im1kX3BhdCIsInJlYWRPbmx5IjpmYWxzZSwidG9rZW5UeXBlIjoicmVhZF93cml0ZSIsImlhdCI6MTc3OTQ2ODI0MX0.6AveIjL-8OfXm3t0Ygfe9QT2d9z2bszjPWLuILI2fns")
+
+def get_db_connection():
+    return duckdb.connect(f'md:?motherduck_token={MD_TOKEN}')
+
 MODEL_DIR = os.path.join(os.path.dirname(__file__), '..', 'models', 'saved')
 ALL_TICKERS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", # Mag 7
@@ -80,7 +88,7 @@ def refresh_market_data():
 
 @st.cache_data(ttl=60)
 def get_latest_data():
-    conn = duckdb.connect(DB_PATH)
+    conn = get_db_connection()
     query = "SELECT * FROM features WHERE date = (SELECT MAX(date) FROM features) ORDER BY ticker"
     df = conn.execute(query).df()
     conn.close()
@@ -88,7 +96,7 @@ def get_latest_data():
 
 @st.cache_data(ttl=300)
 def get_historical_data(ticker, days=90):
-    conn = duckdb.connect(DB_PATH)
+    conn = get_db_connection()
     query = f"SELECT date, close FROM features WHERE ticker = '{ticker}' ORDER BY date DESC LIMIT {days}"
     try:
         df = conn.execute(query).df()
@@ -100,7 +108,7 @@ def get_historical_data(ticker, days=90):
 
 # Portfolio Helpers
 def get_active_trades():
-    conn = duckdb.connect(DB_PATH)
+    conn = get_db_connection()
     try:
         df = conn.execute("SELECT * FROM active_trades WHERE status = 'ACTIVE'").df()
     except:
@@ -109,7 +117,7 @@ def get_active_trades():
     return df
 
 def log_trade(ticker, date, price, tp, sl, quantity=1.0, is_ai_managed=True):
-    conn = duckdb.connect(DB_PATH)
+    conn = get_db_connection()
     
     # Check if trade already exists to calculate weighted average
     existing = conn.execute(f"SELECT entry_price, quantity FROM active_trades WHERE ticker = '{ticker}' AND status = 'ACTIVE'").fetchone()
@@ -147,12 +155,12 @@ def log_trade(ticker, date, price, tp, sl, quantity=1.0, is_ai_managed=True):
     conn.close()
 
 def update_stop_loss(ticker, new_sl):
-    conn = duckdb.connect(DB_PATH)
+    conn = get_db_connection()
     conn.execute(f"UPDATE active_trades SET stop_loss = {new_sl} WHERE ticker = '{ticker}'")
     conn.close()
 
 def close_trade_v2(ticker, exit_price):
-    conn = duckdb.connect(DB_PATH)
+    conn = get_db_connection()
     trade = conn.execute(f"SELECT entry_date, entry_price, quantity, is_ai_managed FROM active_trades WHERE ticker = '{ticker}' AND status = 'ACTIVE'").fetchone()
     if trade:
         exit_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -165,7 +173,7 @@ def close_trade_v2(ticker, exit_price):
     conn.close()
 
 def close_trade(ticker, status):
-    conn = duckdb.connect(DB_PATH)
+    conn = get_db_connection()
     conn.execute(f"UPDATE active_trades SET status = '{status}' WHERE ticker = '{ticker}'")
     conn.close()
 
@@ -266,7 +274,7 @@ def get_live_news(ticker):
     return final_news[:8]
 
 def get_whale_data(ticker):
-    conn = duckdb.connect(DB_PATH)
+    conn = get_db_connection()
     try:
         options = conn.execute(f"SELECT * FROM options_flow WHERE ticker = '{ticker}' ORDER BY volume DESC LIMIT 5").df()
         dark_pools = conn.execute(f"SELECT * FROM dark_pool_blocks WHERE ticker = '{ticker}' ORDER BY datetime DESC LIMIT 3").df()
@@ -700,7 +708,7 @@ elif st.session_state.main_nav_radio == "📈 Performance Analytics":
     st.markdown("### 📈 Closed Trades Ledger")
     st.markdown("This is your quantitative captain's log. True alpha is only visible over large sample sizes.")
     
-    conn = duckdb.connect(DB_PATH)
+    conn = get_db_connection()
     try:
         df_closed = conn.execute("SELECT * FROM closed_trades ORDER BY exit_date DESC").df()
     except:
@@ -731,7 +739,46 @@ elif st.session_state.main_nav_radio == "📈 Performance Analytics":
         fig.update_layout(title="Cumulative Realized Profit", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_title="Date", yaxis_title="Total Profit ($)")
         st.plotly_chart(fig, use_container_width=True)
         
-        st.dataframe(df_closed[['ticker', 'entry_date', 'exit_date', 'entry_price', 'exit_price', 'pl_percent', 'profit_loss']], use_container_width=True)
+        st.markdown("#### 📘 Trade Ledger Details")
+        st.markdown("Use the checkboxes in the **Delete** column and click the button below to remove erroneous trades.")
+        
+        # Filter down to the essential columns
+        display_df = df_closed[['ticker', 'entry_date', 'exit_date', 'entry_price', 'exit_price', 'pl_percent', 'profit_loss']].copy()
+        
+        # Add a selection column for deletion
+        display_df.insert(0, "Delete", False)
+        
+        # Beautifully format the data editor
+        edited_df = st.data_editor(
+            display_df,
+            column_config={
+                "Delete": st.column_config.CheckboxColumn("🗑️ Delete", default=False),
+                "ticker": st.column_config.TextColumn("Ticker", width="small"),
+                "entry_date": st.column_config.DatetimeColumn("Entry Date", format="MMM DD, YYYY - h:mm a"),
+                "exit_date": st.column_config.DatetimeColumn("Exit Date", format="MMM DD, YYYY - h:mm a"),
+                "entry_price": st.column_config.NumberColumn("Entry Price", format="$%.2f"),
+                "exit_price": st.column_config.NumberColumn("Exit Price", format="$%.2f"),
+                "pl_percent": st.column_config.NumberColumn("P&L (%)", format="%.2f%%"),
+                "profit_loss": st.column_config.NumberColumn("Net P&L", format="$%.2f"),
+            },
+            hide_index=True,
+            use_container_width=True,
+            disabled=["ticker", "entry_date", "exit_date", "entry_price", "exit_price", "pl_percent", "profit_loss"]
+        )
+        
+        # Deletion Logic
+        rows_to_delete = edited_df[edited_df["Delete"] == True]
+        if not rows_to_delete.empty:
+            if st.button(f"🚨 Confirm Deletion of {len(rows_to_delete)} Trade(s)", type="primary"):
+                conn = get_db_connection()
+                for _, row in rows_to_delete.iterrows():
+                    ticker = row['ticker']
+                    # Handle pandas timestamp to string formatting for SQL
+                    entry_date_str = pd.to_datetime(row['entry_date']).strftime('%Y-%m-%d %H:%M:%S')
+                    conn.execute(f"DELETE FROM closed_trades WHERE ticker='{ticker}' AND entry_date='{entry_date_str}'")
+                conn.close()
+                st.success("Trades successfully purged from the ledger.")
+                st.rerun()
 
 
 elif st.session_state.main_nav_radio == "📰 Live News & Supply Chain":
