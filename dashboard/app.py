@@ -69,22 +69,10 @@ SECTORS = {
 
 # --- DATABASE HELPER FUNCTIONS ---
 def refresh_market_data():
-    base_dir = os.path.join(os.path.dirname(__file__), '..')
-    scripts = [
-        "data_ingestion/yfinance_scraper.py",
-        "data_ingestion/fred_scraper.py",
-        "feature_engineering/build_features.py",
-        "data_ingestion/whale_scraper.py"
-    ]
-    my_bar = st.progress(0, text="Starting Live Data Sync...")
-    for i, script in enumerate(scripts):
-        my_bar.progress((i + 1) * 25, text=f"Executing {os.path.basename(script)}...")
-        try:
-            subprocess.run([sys.executable, os.path.join(base_dir, script)], check=True, capture_output=True)
-        except subprocess.CalledProcessError as e:
-            st.error(f"Error running {script}: {e.stderr.decode()}")
-            return False
-    my_bar.empty()
+    # The scraping scripts are now fully decoupled and run completely independently 
+    # via the 5-minute GitHub Action cron job. We no longer force Streamlit Cloud's 
+    # 1GB RAM instance to try to execute four massive data pipelines simultaneously.
+    # Streamlit simply fetches the pre-calculated live data from MotherDuck.
     st.cache_data.clear()
     return True
 
