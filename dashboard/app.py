@@ -854,17 +854,7 @@ elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
     
     for ticker in active_tickers:
         ticker_data = df_latest[df_latest['ticker'] == ticker]
-elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
-    st.markdown("### 🕵️ Insider Trading Alpha (V2 Algorithm)")
-    st.markdown("This experimental tab fuses our base AI Mathematical Probability with **SEC Form 4 Insider Tracking**.")
-    st.markdown("When Corporate C-Suite executives buy their own stock heavily on the open market, it acts as a massive conviction multiplier.")
-    st.divider()
-    
-    cols = st.columns(3)
-    col_idx = 0
-    
-    for ticker in active_tickers:
-        ticker_data = df_latest[df_latest['ticker'] == ticker]
+
         if ticker_data.empty: continue
             
         row = ticker_data.iloc[0]
