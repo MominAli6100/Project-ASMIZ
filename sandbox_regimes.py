@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import xgboost as xgb
-from datetime import datetime
+from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -22,24 +22,27 @@ def ATR(high, low, close, period=14):
     tr3 = (low - close.shift()).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     atr = tr.rolling(window=period).mean()
-    return atr / close 
+    return atr / close # Normalized
 
-NEW_TICKERS = ["ALAB", "AVGO", "MRVL", "AMD", "MU", "PLTR", "ASML", "TSM", "IREN", "CRWV", "CRDO", "TAN", "RKLB"]
-features_cols = ['return_1d', 'return_5d', 'rsi_14', 'sma_20_dist', 'sma_50_dist', 'volatility_20d', 'atr_percent', 'spy_sma_200', 'spy_close']
+# Removed KS tickers
+NEW_TICKERS = ["ARM", "CDNS", "SNPS", "AMKR", "ASX", "RMBS", "SITM", "WDC", "STX", "LITE", "COHR", "FN", "APH", "GLW", "LUNA", "ANET", "CIEN", "CLS", "JBL", "FLEX", "TTMI", "VICR", "VRT", "NVT", "PH", "WULF", "CIFR", "IPGP"]
 
-REGIMES = {
-    "2018 Sideways/Volatile": ("2018-01-01", "2018-12-31"),
-    "2020-2021 Bull Market": ("2020-01-01", "2021-12-31"),
-    "2022 Tech Bear Market": ("2022-01-01", "2022-12-31")
-}
+features_cols = [
+    'return_1d', 'return_5d', 'rsi_14', 'sma_20_dist', 'sma_50_dist', 
+    'volatility_20d', 'atr_percent', 'spy_sma_200', 'us_10y_yield', 'm2_money_supply'
+]
 
 def build_sandbox_features(ticker, spy_df):
     try:
         df = yf.download(ticker, period="10y", interval="1d", progress=False)
         if df.empty or len(df) < 100: return pd.DataFrame()
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
         df = df.dropna()
         
+        # Technicals
         df['return_1d'] = df['Close'].pct_change()
         df['return_5d'] = df['Close'].pct_change(5)
         df['rsi_14'] = RSI(df['Close'], 14)
@@ -50,13 +53,17 @@ def build_sandbox_features(ticker, spy_df):
         
         df = df.reset_index()
         df['date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
+        
+        # Merge SPY macro
         df = pd.merge(df, spy_df, on='date', how='left').ffill().dropna()
         
+        # Triple Barrier Labels
         labels = []
         for i in range(len(df)):
             if i + 40 >= len(df):
                 labels.append(0)
                 continue
+                
             entry_price = df.iloc[i]['Close']
             atr = df.iloc[i]['atr_percent']
             tp = entry_price * (1 + (atr * 2.0))
@@ -72,12 +79,18 @@ def build_sandbox_features(ticker, spy_df):
                     label = 0
                     break
             labels.append(label)
+            
         df['target'] = labels
         return df
     except Exception as e:
+        print(f"Failed extracting {ticker}: {e}")
         return pd.DataFrame()
 
-def run_regime_test():
+def run_sandbox():
+    print("="*60)
+    print("--- ISOLATED AI SANDBOX: TESTING MARKET REGIMES ---")
+    print("="*60)
+    
     spy = yf.download("SPY", period="10y", interval="1d", progress=False)
     if isinstance(spy.columns, pd.MultiIndex): spy.columns = spy.columns.get_level_values(0)
     spy = spy.reset_index()
@@ -86,11 +99,15 @@ def run_regime_test():
     spy['spy_sma_200'] = spy['Close'].rolling(200).mean()
     spy = spy[['date', 'spy_close', 'spy_sma_200']]
     
-    all_trades = {regime: [] for regime in REGIMES.keys()}
+    spy['us_10y_yield'] = 4.0
+    spy['m2_money_supply'] = 20000.0
+    
+    trade_history = []
     
     for ticker in NEW_TICKERS:
         df = build_sandbox_features(ticker, spy)
-        if df.empty: continue
+        if df.empty:
+            continue
             
         X = df[features_cols]
         y = df['target']
@@ -98,56 +115,75 @@ def run_regime_test():
         model.fit(X, y)
         df['ai_prob'] = model.predict_proba(X)[:, 1]
         
-        for regime_name, (start_date, end_date) in REGIMES.items():
-            mask = (df['date'] >= start_date) & (df['date'] <= end_date)
-            regime_df = df.loc[mask]
+        in_trade = False
+        entry_price = 0
+        take_profit = 0
+        stop_loss = 0
+        days_held = 0
+        entry_date = None
+        
+        for idx, row in df.iterrows():
+            close = row['Close']
+            atr = row['atr_percent']
+            prob = row['ai_prob']
+            macro_safe = row['spy_close'] > row['spy_sma_200']
+            current_date = row['date']
             
-            in_trade = False
-            entry_price = 0
-            take_profit = 0
-            stop_loss = 0
-            days_held = 0
-            
-            for idx, row in regime_df.iterrows():
-                close = row['Close']
-                atr = row['atr_percent']
-                prob = row['ai_prob']
-                macro_safe = row['spy_close'] > row['spy_sma_200']
+            if not in_trade:
+                if macro_safe and prob > 0.55:
+                    in_trade = True
+                    entry_price = close
+                    take_profit = entry_price * (1 + (atr * 2.0))
+                    stop_loss = entry_price * (1 - (atr * 1.0))
+                    days_held = 0
+                    entry_date = current_date
+            else:
+                days_held += 1
+                new_sl = close * (1 - (atr * 1.0))
+                if new_sl > stop_loss: stop_loss = new_sl
                 
-                if not in_trade:
-                    if macro_safe and prob > 0.55:
-                        in_trade = True
-                        entry_price = close
-                        take_profit = entry_price * (1 + (atr * 2.0))
-                        stop_loss = entry_price * (1 - (atr * 1.0))
-                        days_held = 0
-                else:
-                    days_held += 1
-                    new_sl = close * (1 - (atr * 1.0))
-                    if new_sl > stop_loss: stop_loss = new_sl
-                    
-                    if close >= take_profit or close <= stop_loss or days_held >= 40:
-                        pl_percent = ((close - entry_price) / entry_price) * 100
-                        all_trades[regime_name].append({'Ticker': ticker, 'Return %': pl_percent})
-                        in_trade = False
+                if close >= take_profit or close <= stop_loss or days_held >= 40:
+                    pl_percent = ((close - entry_price) / entry_price) * 100
+                    trade_history.append({
+                        'Ticker': ticker, 
+                        'Entry Date': entry_date,
+                        'Return %': pl_percent
+                    })
+                    in_trade = False
 
-    for regime_name in REGIMES.keys():
-        trades = all_trades[regime_name]
-        print(f"\n[{regime_name}]")
-        if not trades:
-            print("  -> AI safely held CASH. Zero trades executed to avoid market crash.")
-        else:
-            results_df = pd.DataFrame(trades)
-            total_trades = len(results_df)
-            wins = len(results_df[results_df['Return %'] > 0])
-            losses = total_trades - wins
-            win_rate = (wins / total_trades) * 100
-            avg_win = results_df[results_df['Return %'] > 0]['Return %'].mean() if wins > 0 else 0
-            avg_loss = results_df[results_df['Return %'] <= 0]['Return %'].mean() if losses > 0 else 0
-            print(f"  Trades Executed: {total_trades}")
-            print(f"  Win Rate:        {win_rate:.1f}% ({wins}W / {losses}L)")
-            print(f"  Avg Win:         +{avg_win:.2f}%")
-            print(f"  Avg Loss:        {avg_loss:.2f}%")
+    if not trade_history:
+        print("\nNo trades executed.")
+        return
+        
+    results_df = pd.DataFrame(trade_history)
+    
+    regimes = {
+        "Bull Market (2020-04 to 2021-12)": ("2020-04-01", "2021-12-31"),
+        "Bear Market (2022)": ("2022-01-01", "2022-12-31"),
+        "Sideways Market (2015 to Mid 2016)": ("2015-01-01", "2016-06-30"),
+        "Recent YTD (2026-01-01 to 2026-05-22)": ("2026-01-01", "2026-05-22")
+    }
+    
+    for name, (start, end) in regimes.items():
+        mask = (results_df['Entry Date'] >= start) & (results_df['Entry Date'] <= end)
+        subset = results_df[mask]
+        
+        print(f"\n[{name}]")
+        total = len(subset)
+        if total == 0:
+            print("  No trades taken in this period.")
+            continue
+            
+        wins = len(subset[subset['Return %'] > 0])
+        losses = total - wins
+        win_rate = (wins / total) * 100
+        avg_win = subset[subset['Return %'] > 0]['Return %'].mean() if wins > 0 else 0
+        avg_loss = subset[subset['Return %'] <= 0]['Return %'].mean() if losses > 0 else 0
+        
+        print(f"  Total Trades: {total}")
+        print(f"  Win Rate:     {win_rate:.1f}% ({wins}W / {losses}L)")
+        print(f"  Avg Win:      +{avg_win:.2f}%")
+        print(f"  Avg Loss:     {avg_loss:.2f}%")
 
 if __name__ == "__main__":
-    run_regime_test()
+    run_sandbox()

@@ -10,6 +10,7 @@ ALL_TICKERS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", # Mag 7
     "ALAB", "AVGO", "MRVL", "AMD", "MU", "PLTR", "ASML", "TSM", "IREN", "CRWV", "CRDO", "TAN", "RKLB", # High Growth Tech
     "WLKP", "ECL", "LIN", "LXU", "CC", # Chemical/Industrial
+    "ARM", "CDNS", "SNPS", "AMKR", "ASX", "RMBS", "SITM", "WDC", "STX", "LITE", "COHR", "FN", "APH", "GLW", "LUNA", "ANET", "CIEN", "CLS", "JBL", "FLEX", "TTMI", "VICR", "VRT", "NVT", "PH", "WULF", "CIFR", "IPGP", # Advanced Semiconductors & Networking
     "SPY", "QQQ", "DIA", "XLF", "COST", "BRK-B" # Standard Market ETFs & Blue Chips
 ]
 

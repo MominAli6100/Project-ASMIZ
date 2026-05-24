@@ -24,7 +24,7 @@ def ATR(high, low, close, period=14):
     atr = tr.rolling(window=period).mean()
     return atr / close # Normalized
 
-NEW_TICKERS = ["ALAB", "AVGO", "MRVL", "AMD", "MU", "PLTR", "ASML", "TSM", "IREN", "CRWV", "CRDO", "TAN", "RKLB"]
+NEW_TICKERS = ["ARM", "CDNS", "SNPS", "AMKR", "ASX", "RMBS", "SITM", "005930.KS", "000660.KS", "WDC", "STX", "LITE", "COHR", "FN", "APH", "GLW", "LUNA", "ANET", "CIEN", "CLS", "JBL", "FLEX", "TTMI", "VICR", "VRT", "NVT", "PH", "WULF", "CIFR", "IPGP"]
 
 features_cols = [
     'return_1d', 'return_5d', 'rsi_14', 'sma_20_dist', 'sma_50_dist', 
