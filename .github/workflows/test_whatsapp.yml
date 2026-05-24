@@ -23,7 +23,7 @@ jobs:
         python-version: '3.11'
 
     - name: Install Twilio
-      run: pip install twilio==8.14.0
+      run: pip install twilio==9.10.9
 
     - name: Run Test Script
       run: python test_whatsapp.py
