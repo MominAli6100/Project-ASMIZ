@@ -46,3 +46,6 @@ jobs:
       
     - name: Run AI Prediction Generation Engine
       run: python notification_engine.py
+
+    - name: Keep Streamlit App Alive
+      run: curl -s https://project-asmiz.streamlit.app/ > /dev/null
