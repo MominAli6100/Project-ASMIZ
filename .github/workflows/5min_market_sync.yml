@@ -38,8 +38,11 @@ jobs:
     - name: Run Feature Engineering
       run: python feature_engineering/build_features.py
 
-    - name: Run Whale Tracking Scraper
+    - name: Run Whale Tracking Engine
       run: python data_ingestion/whale_scraper.py
-
-    - name: Run WhatsApp Notification Engine
+      
+    - name: Run Insider Tracking Engine
+      run: python data_ingestion/insider_scraper.py
+      
+    - name: Run AI Prediction Generation Engine
       run: python notification_engine.py

@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 # Configure page to look clean and wide
 st.set_page_config(page_title="Mag 7 Quant Engine", layout="wide", page_icon="📈")
 
-view_selection = st.radio("Select View", ["📊 Simple Action View", "💼 Active Portfolio", "📈 Performance Analytics", "📰 Live News & Supply Chain"], label_visibility="collapsed", key="main_nav_radio")
+view_selection = st.radio("Select View", ["📊 Simple Action View", "💼 Active Portfolio", "📈 Performance Analytics", "📰 Live News & Supply Chain", "🕵️ Insider Alpha (V2)"], label_visibility="collapsed", key="main_nav_radio")
 st.divider()
 
 
@@ -277,6 +277,17 @@ def get_whale_data(ticker):
         dark_pools = pd.DataFrame()
     conn.close()
     return options, dark_pools
+
+@st.cache_data(ttl=300)
+def get_insider_data(ticker):
+    conn = get_db_connection()
+    try:
+        df = conn.execute(f"SELECT * FROM insider_trades WHERE ticker = '{ticker}' ORDER BY fetch_date DESC LIMIT 1").df()
+    except:
+        df = pd.DataFrame()
+    conn.close()
+    return df
+
 
 # --- PLOTLY SPARKLINE ---
 def create_sparkline(ticker, current_price, take_profit, stop_loss, is_buy=True, expected_days=40):
