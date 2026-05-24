@@ -12,10 +12,8 @@ jobs:
 
     env:
       MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
-      TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
-      TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
-      TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
-      TWILIO_TO_NUMBER: ${{ secrets.TWILIO_TO_NUMBER }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     steps:
     - name: Checkout Code

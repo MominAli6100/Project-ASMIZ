@@ -3,31 +3,32 @@ import duckdb
 import pandas as pd
 import joblib
 from datetime import datetime, timedelta
-from twilio.rest import Client
+import requests
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'database', 'quant_data.duckdb')
 MODEL_DIR = os.path.join(os.path.dirname(__file__), 'models', 'saved')
 
-def send_whatsapp(message):
-    account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
-    auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
-    from_num = os.environ.get('TWILIO_FROM_NUMBER') # e.g. "whatsapp:+14155238886"
-    to_num = os.environ.get('TWILIO_TO_NUMBER')     # e.g. "whatsapp:+1234567890"
+def send_telegram(message):
+    bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    chat_id = os.environ.get('TELEGRAM_CHAT_ID')
     
-    if not all([account_sid, auth_token, from_num, to_num]):
-        print("Twilio credentials not fully configured. Skipping WhatsApp message.")
+    if not all([bot_token, chat_id]):
+        print("Telegram credentials not fully configured. Skipping message.")
         return
         
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    
     try:
-        client = Client(account_sid, auth_token)
-        message = client.messages.create(
-            from_=from_num,
-            body=message,
-            to=to_num
-        )
-        print(f"Sent WhatsApp: {message.sid}")
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        print("Sent Telegram message.")
     except Exception as e:
-        print(f"Error sending WhatsApp: {e}")
+        print(f"Error sending Telegram: {e}")
 
 def run_engine():
     conn = duckdb.connect(f'md:?motherduck_token={os.environ.get("MOTHERDUCK_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6Im1vbWluYWxpMDVAZ21haWwuY29tIiwibWRSZWdpb24iOiJhd3MtdXMtZWFzdC0xIiwic2Vzc2lvbiI6Im1vbWluYWxpMDUuZ21haWwuY29tIiwicGF0IjoibGRwVDBFR2Y4RXFjQjNjWGF0Uko5YXNNYkVwT0hiMXBTNmpiMFdUTzB2ayIsInVzZXJJZCI6IjcxYWRlNjBmLTI2ZDctNGE1MS1iMzkwLTVhYzEzMjUxYjcwYiIsImlzcyI6Im1kX3BhdCIsInJlYWRPbmx5IjpmYWxzZSwidG9rZW5UeXBlIjoicmVhZF93cml0ZSIsImlhdCI6MTc3OTQ2ODI0MX0.6AveIjL-8OfXm3t0Ygfe9QT2d9z2bszjPWLuILI2fns")}')
@@ -102,7 +103,7 @@ def run_engine():
                                 f"🛡️ Stop Loss: ${sl:.2f}\n\n"
                                 f"Log this trade in the Active Portfolio tab if you take it!"
                             )
-                            send_whatsapp(msg)
+                            send_telegram(msg)
                             conn.execute(f"INSERT INTO notification_state VALUES ('{ticker}', 'BUY', CURRENT_TIMESTAMP)")
     
     # 3. Check Active Portfolio for Sell Signals (TP/SL Hits)
@@ -123,12 +124,12 @@ def run_engine():
                     
                     if current_price >= tp:
                         msg = f"🎯 *AI SELL ALERT (PROFIT)* 🎯\n\n{ticker} hit its Take Profit of ${tp:.2f}. Close your position to secure gains!"
-                        send_whatsapp(msg)
+                        send_telegram(msg)
                         conn.execute(f"UPDATE active_trades SET status = 'CLOSED_WIN', exit_date = CURRENT_TIMESTAMP, exit_price = {current_price} WHERE id = {trade_id}")
                     
                     elif current_price <= sl:
                         msg = f"🛑 *AI SELL ALERT (STOP LOSS)* 🛑\n\n{ticker} hit its Stop Loss of ${sl:.2f}. The AI recommends exiting to preserve capital."
-                        send_whatsapp(msg)
+                        send_telegram(msg)
                         conn.execute(f"UPDATE active_trades SET status = 'CLOSED_LOSS', exit_date = CURRENT_TIMESTAMP, exit_price = {current_price} WHERE id = {trade_id}")
     except Exception as e:
         print(f"Error checking active portfolio: {e}")
