@@ -854,6 +854,17 @@ elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
     
     for ticker in active_tickers:
         ticker_data = df_latest[df_latest['ticker'] == ticker]
+elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
+    st.markdown("### 🕵️ Insider Trading Alpha (V2 Algorithm)")
+    st.markdown("This experimental tab fuses our base AI Mathematical Probability with **SEC Form 4 Insider Tracking**.")
+    st.markdown("When Corporate C-Suite executives buy their own stock heavily on the open market, it acts as a massive conviction multiplier.")
+    st.divider()
+    
+    cols = st.columns(3)
+    col_idx = 0
+    
+    for ticker in active_tickers:
+        ticker_data = df_latest[df_latest['ticker'] == ticker]
         if ticker_data.empty: continue
             
         row = ticker_data.iloc[0]
@@ -863,6 +874,11 @@ elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
         if row['sma_20_dist'] > 0 and row['sma_50_dist'] > 0: trend = "Bullish Trajectory ↗"
         elif row['sma_20_dist'] < 0 and row['sma_50_dist'] < 0: trend = "Bearish Trajectory ↘"
         else: trend = "Stagnant / Sideways ➔"
+        
+        if row['rsi_14'] > 70: driver = "Driven by heavily overbought momentum (RSI > 70)."
+        elif row['rsi_14'] < 30: driver = "Driven by oversold bounce conditions (RSI < 30)."
+        elif row['us_10y_yield'] > 4.5: driver = "Pressured by high 10Y Treasury Yields."
+        else: driver = f"Driven by normal volatility cycles (ATR: {row['atr_percent']*100:.1f}%)."
             
         model_path = os.path.join(MODEL_DIR, f"{ticker}_xgb.joblib")
         if os.path.exists(model_path):
@@ -915,6 +931,24 @@ elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
         v2_prob = max(0, min(100, ai_prob + conviction_bonus))
         is_buy = (v2_prob >= 60 and macro_safe)
         
+        if not is_buy:
+            if not macro_safe:
+                v2_reasoning = "<b>V2 Verdict:</b> Rejecting due to dangerous macroeconomic conditions (S&P 500 in downtrend)."
+            elif "Bullish" in trend:
+                if row['rsi_14'] > 60:
+                    v2_reasoning = "<b>V2 Verdict:</b> The trend is bullish, but the stock is currently overextended. Buying now carries a high risk of a pullback. The V2 Engine is holding cash."
+                else:
+                    v2_reasoning = "<b>V2 Verdict:</b> The trend is bullish, but the combined AI + Insider setup lacks the required mathematical edge to authorize a buy."
+            elif "Bearish" in trend:
+                v2_reasoning = "<b>V2 Verdict:</b> The stock is in a confirmed downtrend. The V2 Engine will not attempt to catch a falling knife without massive insider buying."
+            else:
+                v2_reasoning = "<b>V2 Verdict:</b> The stock is moving sideways with no clear momentum. Holding cash."
+        else:
+            if conviction_bonus > 0:
+                v2_reasoning = "<b>V2 Verdict:</b> Statistical edge confirmed and bolstered by Insider Accumulation. High probability of an asymmetric breakout."
+            else:
+                v2_reasoning = "<b>V2 Verdict:</b> Statistical edge confirmed. High probability of an asymmetric breakout despite neutral insider activity."
+        
         # UI rendering
         if is_buy:
             signal = "🟢 V2 BUY TRIGGERED"
@@ -927,11 +961,15 @@ elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
             border_color = "#fad2cf"
             text_color = "#c5221f"
             
-        action_html = f"""<div style="background-color: {bg_color}; padding: 20px; border-radius: 12px; border: 1px solid {border_color}; margin-bottom: 5px; height: 500px; display: flex; flex-direction: column; overflow-y: auto;">
+        action_html = f"""<div style="background-color: {bg_color}; padding: 20px; border-radius: 12px; border: 1px solid {border_color}; margin-bottom: 5px; height: 600px; display: flex; flex-direction: column; overflow-y: auto;">
 <div>
 <div style="background-color: #fff; border: 1px solid {border_color}; padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 12px; color: #5f6368; margin-bottom: 5px;"><b>V2 ALGORITHM</b></div>
 <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${entry_price:.2f}</span></h2>
 <h2 style="color: {text_color}; margin: 5px 0;">{signal}</h2>
+<p style="color: #202124; font-size: 14px; margin-top: 15px;"><b>Trend:</b> {trend}</p>
+<p style="color: #5f6368; font-size: 13px;">{driver}</p>
+<hr style="border-color: {border_color}; margin: 10px 0;">
+<p style="color: #202124; font-size: 13px; line-height: 1.4;">{v2_reasoning}</p>
 <hr style="border-color: {border_color}; margin: 10px 0;">
 <p style="color: #202124; font-size: 14px; margin-top: 10px;"><b>Base AI Prob:</b> {ai_prob:.1f}%</p>
 <div style="padding: 10px; background-color: #f1f3f4; border-left: 4px solid {insider_color}; border-radius: 4px; margin: 10px 0;">
