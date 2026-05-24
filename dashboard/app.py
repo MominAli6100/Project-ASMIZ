@@ -842,3 +842,118 @@ elif st.session_state.main_nav_radio == "📰 Live News & Supply Chain":
                         st.markdown("<hr style='margin: 5px 0px;'>", unsafe_allow_html=True)
                 else:
                     st.markdown("<span style='color:gray; font-size: 14px;'>No recent fundamental news.</span>", unsafe_allow_html=True)
+
+elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
+    st.markdown("### 🕵️ Insider Trading Alpha (V2 Algorithm)")
+    st.markdown("This experimental tab fuses our base AI Mathematical Probability with **SEC Form 4 Insider Tracking**.")
+    st.markdown("When Corporate C-Suite executives buy their own stock heavily on the open market, it acts as a massive conviction multiplier.")
+    st.divider()
+    
+    cols = st.columns(3)
+    col_idx = 0
+    
+    for ticker in active_tickers:
+        ticker_data = df_latest[df_latest['ticker'] == ticker]
+        if ticker_data.empty: continue
+            
+        row = ticker_data.iloc[0]
+        X_pred = ticker_data[features_cols]
+        
+        # Trend logic
+        if row['sma_20_dist'] > 0 and row['sma_50_dist'] > 0: trend = "Bullish Trajectory ↗"
+        elif row['sma_20_dist'] < 0 and row['sma_50_dist'] < 0: trend = "Bearish Trajectory ↘"
+        else: trend = "Stagnant / Sideways ➔"
+            
+        model_path = os.path.join(MODEL_DIR, f"{ticker}_xgb.joblib")
+        if os.path.exists(model_path):
+            model = joblib.load(model_path)
+            ai_prob = model.predict_proba(X_pred)[0][1] * 100
+        else:
+            ai_prob = 0
+            
+        entry_price = row['close']
+        atr = row['atr_percent']
+        take_profit = entry_price * (1 + (atr * 2.0))
+        stop_loss = entry_price * (1 - (atr * 1.0))
+        
+        # Pull Insider Data
+        insider_df = get_insider_data(ticker)
+        net_shares = 0
+        if not insider_df.empty:
+            net_shares = insider_df['net_shares_purchased_6m'].iloc[0]
+            
+        # Insider V2 Overlay Math
+        conviction_bonus = 0
+        insider_status = "⚪ Neutral Insider Activity (0 Net Shares)"
+        insider_color = "#5f6368"
+        
+        # Determine actual shares format (sometimes it's raw, sometimes millions)
+        if abs(net_shares) < 1000 and abs(net_shares) > 0:
+            display_shares = f"{net_shares:.2f}M"
+            is_massive = abs(net_shares) > 1.0 # > 1 Million shares
+        else:
+            display_shares = f"{net_shares:,.0f}"
+            is_massive = abs(net_shares) > 1000000
+            
+        if is_massive and net_shares > 0:
+            conviction_bonus = 15
+            insider_status = f"🚨 MASSIVE INSIDER BUYING (+15% Edge)<br>Net Shares: +{display_shares}"
+            insider_color = "#137333"
+        elif net_shares > 0:
+            conviction_bonus = 5
+            insider_status = f"🟢 Insider Accumulation (+5% Edge)<br>Net Shares: +{display_shares}"
+            insider_color = "#137333"
+        elif is_massive and net_shares < 0:
+            conviction_bonus = -10
+            insider_status = f"🔴 Heavy Insider Selling (-10% Edge)<br>Net Shares: {display_shares}"
+            insider_color = "#c5221f"
+        elif net_shares < 0:
+            conviction_bonus = -5
+            insider_status = f"🔴 Mild Insider Selling (-5% Edge)<br>Net Shares: {display_shares}"
+            insider_color = "#c5221f"
+            
+        v2_prob = max(0, min(100, ai_prob + conviction_bonus))
+        is_buy = (v2_prob >= 60 and macro_safe)
+        
+        # UI rendering
+        if is_buy:
+            signal = "🟢 V2 BUY TRIGGERED"
+            bg_color = "#e6f4ea"
+            border_color = "#ceead6"
+            text_color = "#137333"
+        else:
+            signal = "🛑 V2 REJECTED"
+            bg_color = "#fce8e6"
+            border_color = "#fad2cf"
+            text_color = "#c5221f"
+            
+        action_html = f"""
+            <div style="background-color: {bg_color}; padding: 20px; border-radius: 12px; border: 1px solid {border_color}; margin-bottom: 5px; height: 500px; display: flex; flex-direction: column; overflow-y: auto;">
+                <div>
+                    <div style="background-color: #fff; border: 1px solid {border_color}; padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 12px; color: #5f6368; margin-bottom: 5px;"><b>V2 ALGORITHM</b></div>
+                    <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${entry_price:.2f}</span></h2>
+                    <h2 style="color: {text_color}; margin: 5px 0;">{signal}</h2>
+                    <hr style="border-color: {border_color}; margin: 10px 0;">
+                    
+                    <p style="color: #202124; font-size: 14px; margin-top: 10px;"><b>Base AI Prob:</b> {ai_prob:.1f}%</p>
+                    <div style="padding: 10px; background-color: #f1f3f4; border-left: 4px solid {insider_color}; border-radius: 4px; margin: 10px 0;">
+                        <p style="color: {insider_color}; margin: 0; font-size: 14px; font-weight: bold;">{insider_status}</p>
+                    </div>
+                </div>
+                <div style="margin-top: auto;">
+                    <p style="color: #202124; font-size: 15px; font-weight: bold; margin: 0 0 5px 0;">Total V2 Conviction: {v2_prob:.1f}%</p>
+                    <div style="background-color: #dadce0; border-radius: 4px; width: 100%; height: 8px;">
+                        <div style="background-color: {text_color}; width: {v2_prob}%; height: 100%; border-radius: 4px;"></div>
+                    </div>
+                </div>
+            </div>
+        """
+        
+        with cols[col_idx % 3]:
+            st.markdown(action_html, unsafe_allow_html=True)
+            if is_buy:
+                if st.button(f"📥 Log V2 {ticker} Trade", key=f"add_v2_{ticker}", use_container_width=True):
+                    log_trade(ticker, latest_date, entry_price, take_profit, stop_loss, quantity=1.0, is_ai_managed=True)
+                    st.success(f"{ticker} logged to Portfolio via V2!")
+                    
+        col_idx += 1
