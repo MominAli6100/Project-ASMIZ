@@ -988,15 +988,43 @@ elif st.session_state.main_nav_radio == "⏪ Backtest Simulator":
     st.markdown("Simulate how the AI would have performed historically. **This is a read-only sandbox and does not modify your live trading algorithms.**")
     st.divider()
     
-    col1, col2 = st.columns(2)
+    # Fetch Min and Max Dates from database
+    @st.cache_data(ttl=3600)
+    def get_date_range():
+        conn = get_db_connection()
+        res = conn.execute("SELECT MIN(date) as min_d, MAX(date) as max_d FROM features").df()
+        conn.close()
+        return pd.to_datetime(res['min_d'].iloc[0]).date(), pd.to_datetime(res['max_d'].iloc[0]).date()
+        
+    min_db_date, max_db_date = get_date_range()
+    
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        algo_choice = st.selectbox("Select Algorithm to Test", ["V1 Base AI (Math Only)", "V2 Insider Alpha (Math + SEC Form 4)"])
+        algo_choice = st.selectbox("Select Algorithm", ["V1 Base AI (Math Only)", "V2 Insider Alpha (Math + SEC Form 4)"])
     with col2:
-        sector_choice = st.selectbox("Select Sector Universe", list(SECTORS.keys()))
+        asset_type = st.selectbox("Asset Granularity", ["Sector Universe", "Individual Stock"])
+        if asset_type == "Sector Universe":
+            asset_choice = st.selectbox("Select Universe", list(SECTORS.keys()))
+        else:
+            asset_choice = st.selectbox("Select Ticker", ALL_TICKERS)
+    with col3:
+        starting_capital = st.number_input("Starting Capital ($)", min_value=100.0, value=10000.0, step=1000.0)
+    with col4:
+        date_range = st.date_input("Select Date Range", value=(min_db_date, max_db_date), min_value=min_db_date, max_value=max_db_date)
         
     if st.button("🚀 Run Backtest Simulation", use_container_width=True):
-        tickers_to_test = SECTORS[sector_choice]
-        st.info(f"Initiating historical simulation for {len(tickers_to_test)} tickers using {algo_choice}...")
+        if len(date_range) != 2:
+            st.error("Please select a valid start and end date.")
+            st.stop()
+            
+        start_date, end_date = date_range
+        
+        if asset_type == "Sector Universe":
+            tickers_to_test = SECTORS[asset_choice]
+        else:
+            tickers_to_test = [asset_choice]
+            
+        st.info(f"Initiating historical simulation using {algo_choice}...")
         
         # Define simulation parameters
         use_v2 = "V2" in algo_choice
@@ -1006,8 +1034,16 @@ elif st.session_state.main_nav_radio == "⏪ Backtest Simulator":
         
         # Load all historical data into memory for simulation
         conn = get_db_connection()
-        hist_df = conn.execute("SELECT * FROM features ORDER BY date ASC").df()
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
+        
+        hist_df = conn.execute(f"SELECT * FROM features WHERE date >= '{start_str}' AND date <= '{end_str}' ORDER BY date ASC").df()
+        spy_df = conn.execute(f"SELECT date, close FROM features WHERE ticker = 'SPY' AND date >= '{start_str}' AND date <= '{end_str}' ORDER BY date ASC").df()
         conn.close()
+        
+        if hist_df.empty:
+            st.error(f"No data available for the selected date range ({start_str} to {end_str}).")
+            st.stop()
         
         trade_history = []
         
@@ -1122,11 +1158,21 @@ elif st.session_state.main_nav_radio == "⏪ Backtest Simulator":
             
             # Equity Curve
             res_df['Cumulative Return'] = res_df['Return %'].cumsum()
-            res_df['Portfolio Value'] = 10000 * (1 + (res_df['Cumulative Return']/100))
+            res_df['Portfolio Value'] = starting_capital * (1 + (res_df['Cumulative Return']/100))
+            
+            # Baseline SPY Calculation
+            if not spy_df.empty:
+                spy_start = spy_df['close'].iloc[0]
+                spy_df['spy_return'] = ((spy_df['close'] - spy_start) / spy_start) * 100
+                spy_df['SPY Value'] = starting_capital * (1 + (spy_df['spy_return']/100))
             
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=res_df['Exit Date'], y=res_df['Portfolio Value'], mode='lines', name='Equity Curve', line=dict(color='#137333', width=3)))
-            fig.update_layout(title="Simulated Portfolio Equity (Starting $10k)", xaxis_title="Date", yaxis_title="Portfolio Value ($)", template="plotly_white", margin=dict(l=0, r=0, t=40, b=0))
+            fig.add_trace(go.Scatter(x=res_df['Exit Date'], y=res_df['Portfolio Value'], mode='lines', name='AI Equity Curve', line=dict(color='#137333', width=3)))
+            
+            if not spy_df.empty:
+                fig.add_trace(go.Scatter(x=spy_df['date'], y=spy_df['SPY Value'], mode='lines', name='S&P 500 (Buy & Hold)', line=dict(color='#5f6368', width=2, dash='dash')))
+                
+            fig.update_layout(title=f"Simulated Portfolio Equity (Starting ${starting_capital:,.2f})", xaxis_title="Date", yaxis_title="Portfolio Value ($)", template="plotly_white", margin=dict(l=0, r=0, t=40, b=0), hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
             
             with st.expander("📝 View Raw Trade Log"):
