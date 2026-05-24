@@ -927,27 +927,25 @@ elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
             border_color = "#fad2cf"
             text_color = "#c5221f"
             
-        action_html = f"""
-            <div style="background-color: {bg_color}; padding: 20px; border-radius: 12px; border: 1px solid {border_color}; margin-bottom: 5px; height: 500px; display: flex; flex-direction: column; overflow-y: auto;">
-                <div>
-                    <div style="background-color: #fff; border: 1px solid {border_color}; padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 12px; color: #5f6368; margin-bottom: 5px;"><b>V2 ALGORITHM</b></div>
-                    <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${entry_price:.2f}</span></h2>
-                    <h2 style="color: {text_color}; margin: 5px 0;">{signal}</h2>
-                    <hr style="border-color: {border_color}; margin: 10px 0;">
-                    
-                    <p style="color: #202124; font-size: 14px; margin-top: 10px;"><b>Base AI Prob:</b> {ai_prob:.1f}%</p>
-                    <div style="padding: 10px; background-color: #f1f3f4; border-left: 4px solid {insider_color}; border-radius: 4px; margin: 10px 0;">
-                        <p style="color: {insider_color}; margin: 0; font-size: 14px; font-weight: bold;">{insider_status}</p>
-                    </div>
-                </div>
-                <div style="margin-top: auto;">
-                    <p style="color: #202124; font-size: 15px; font-weight: bold; margin: 0 0 5px 0;">Total V2 Conviction: {v2_prob:.1f}%</p>
-                    <div style="background-color: #dadce0; border-radius: 4px; width: 100%; height: 8px;">
-                        <div style="background-color: {text_color}; width: {v2_prob}%; height: 100%; border-radius: 4px;"></div>
-                    </div>
-                </div>
-            </div>
-        """
+        action_html = f"""<div style="background-color: {bg_color}; padding: 20px; border-radius: 12px; border: 1px solid {border_color}; margin-bottom: 5px; height: 500px; display: flex; flex-direction: column; overflow-y: auto;">
+<div>
+    <div style="background-color: #fff; border: 1px solid {border_color}; padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 12px; color: #5f6368; margin-bottom: 5px;"><b>V2 ALGORITHM</b></div>
+    <h2 style="margin-top:0; color: #202124;">{ticker} <span style='float:right; color:#5f6368;'>${entry_price:.2f}</span></h2>
+    <h2 style="color: {text_color}; margin: 5px 0;">{signal}</h2>
+    <hr style="border-color: {border_color}; margin: 10px 0;">
+    
+    <p style="color: #202124; font-size: 14px; margin-top: 10px;"><b>Base AI Prob:</b> {ai_prob:.1f}%</p>
+    <div style="padding: 10px; background-color: #f1f3f4; border-left: 4px solid {insider_color}; border-radius: 4px; margin: 10px 0;">
+        <p style="color: {insider_color}; margin: 0; font-size: 14px; font-weight: bold;">{insider_status}</p>
+    </div>
+</div>
+<div style="margin-top: auto;">
+    <p style="color: #202124; font-size: 15px; font-weight: bold; margin: 0 0 5px 0;">Total V2 Conviction: {v2_prob:.1f}%</p>
+    <div style="background-color: #dadce0; border-radius: 4px; width: 100%; height: 8px;">
+        <div style="background-color: {text_color}; width: {v2_prob}%; height: 100%; border-radius: 4px;"></div>
+    </div>
+</div>
+</div>"""
         
         with cols[col_idx % 3]:
             st.markdown(action_html, unsafe_allow_html=True)
