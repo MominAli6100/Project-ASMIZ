@@ -1160,6 +1160,13 @@ elif st.session_state.main_nav_radio == "⏪ Backtest Simulator":
             res_df['Cumulative Return'] = res_df['Return %'].cumsum()
             res_df['Portfolio Value'] = starting_capital * (1 + (res_df['Cumulative Return']/100))
             
+            # Prepend starting capital so the graph starts on day 1
+            start_row = pd.DataFrame([{
+                'Exit Date': pd.to_datetime(start_date),
+                'Portfolio Value': starting_capital
+            }])
+            plot_df = pd.concat([start_row, res_df[['Exit Date', 'Portfolio Value']]]).reset_index(drop=True)
+            
             # Baseline SPY Calculation
             if not spy_df.empty:
                 spy_start = spy_df['close'].iloc[0]
@@ -1167,7 +1174,8 @@ elif st.session_state.main_nav_radio == "⏪ Backtest Simulator":
                 spy_df['SPY Value'] = starting_capital * (1 + (spy_df['spy_return']/100))
             
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=res_df['Exit Date'], y=res_df['Portfolio Value'], mode='lines', name='AI Equity Curve', line=dict(color='#137333', width=3)))
+            # Use line_shape='hv' so the portfolio stays flat while in cash/holding, then steps up/down on exit
+            fig.add_trace(go.Scatter(x=plot_df['Exit Date'], y=plot_df['Portfolio Value'], mode='lines', name='AI Equity Curve', line=dict(color='#137333', width=3, shape='hv')))
             
             if not spy_df.empty:
                 fig.add_trace(go.Scatter(x=spy_df['date'], y=spy_df['SPY Value'], mode='lines', name='S&P 500 (Buy & Hold)', line=dict(color='#5f6368', width=2, dash='dash')))
@@ -1175,5 +1183,22 @@ elif st.session_state.main_nav_radio == "⏪ Backtest Simulator":
             fig.update_layout(title=f"Simulated Portfolio Equity (Starting ${starting_capital:,.2f})", xaxis_title="Date", yaxis_title="Portfolio Value ($)", template="plotly_white", margin=dict(l=0, r=0, t=40, b=0), hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
             
-            with st.expander("📝 View Raw Trade Log"):
-                st.dataframe(res_df, use_container_width=True)
+            with st.expander("📝 View Clean Trade Log", expanded=True):
+                # Clean up the dataframe for display
+                display_df = res_df.copy()
+                display_df['Entry Date'] = pd.to_datetime(display_df['Entry Date']).dt.strftime('%Y-%m-%d')
+                display_df['Exit Date'] = pd.to_datetime(display_df['Exit Date']).dt.strftime('%Y-%m-%d')
+                
+                st.dataframe(
+                    display_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Entry Price": st.column_config.NumberColumn("Entry Price", format="$%.2f"),
+                        "Exit Price": st.column_config.NumberColumn("Exit Price", format="$%.2f"),
+                        "Return %": st.column_config.NumberColumn("Trade Return", format="%.2f%%"),
+                        "Cumulative Return": st.column_config.NumberColumn("Total Return", format="%.2f%%"),
+                        "Portfolio Value": st.column_config.NumberColumn("Portfolio Value", format="$%.2f"),
+                        "Days Held": st.column_config.NumberColumn("Days Held")
+                    }
+                )
