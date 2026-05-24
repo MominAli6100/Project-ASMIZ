@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 # Configure page to look clean and wide
 st.set_page_config(page_title="Mag 7 Quant Engine", layout="wide", page_icon="📈")
 
-view_selection = st.radio("Select View", ["📊 Simple Action View", "💼 Active Portfolio", "📈 Performance Analytics", "📰 Live News & Supply Chain", "🕵️ Insider Alpha (V2)"], label_visibility="collapsed", key="main_nav_radio")
+view_selection = st.radio("Select View", ["📊 Simple Action View", "💼 Active Portfolio", "📈 Performance Analytics", "📰 Live News & Supply Chain", "🕵️ Insider Alpha (V2)", "⏪ Backtest Simulator"], label_visibility="collapsed", key="main_nav_radio")
 st.divider()
 
 
@@ -982,3 +982,152 @@ elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
                     st.success(f"{ticker} logged to Portfolio via V2!")
                     
         col_idx += 1
+
+elif st.session_state.main_nav_radio == "⏪ Backtest Simulator":
+    st.markdown("### ⏪ Historical Backtest Simulator")
+    st.markdown("Simulate how the AI would have performed historically. **This is a read-only sandbox and does not modify your live trading algorithms.**")
+    st.divider()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        algo_choice = st.selectbox("Select Algorithm to Test", ["V1 Base AI (Math Only)", "V2 Insider Alpha (Math + SEC Form 4)"])
+    with col2:
+        sector_choice = st.selectbox("Select Sector Universe", list(SECTORS.keys()))
+        
+    if st.button("🚀 Run Backtest Simulation", use_container_width=True):
+        tickers_to_test = SECTORS[sector_choice]
+        st.info(f"Initiating historical simulation for {len(tickers_to_test)} tickers using {algo_choice}...")
+        
+        # Define simulation parameters
+        use_v2 = "V2" in algo_choice
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Load all historical data into memory for simulation
+        conn = get_db_connection()
+        hist_df = conn.execute("SELECT * FROM features ORDER BY date ASC").df()
+        conn.close()
+        
+        trade_history = []
+        
+        for i, ticker in enumerate(tickers_to_test):
+            status_text.text(f"Simulating {ticker} ({i+1}/{len(tickers_to_test)})...")
+            progress_bar.progress((i + 1) / len(tickers_to_test))
+            
+            ticker_df = hist_df[hist_df['ticker'] == ticker].copy()
+            if ticker_df.empty: continue
+                
+            model_path = os.path.join(MODEL_DIR, f"{ticker}_xgb.joblib")
+            if not os.path.exists(model_path): continue
+                
+            model = joblib.load(model_path)
+            
+            # Pre-calculate probabilities
+            X = ticker_df[features_cols].fillna(0)
+            ticker_df['ai_prob'] = model.predict_proba(X)[:, 1] * 100
+            
+            # V2 Logic
+            if use_v2:
+                # We fetch the insider data once per ticker and apply the bonus dynamically
+                insider_df = get_insider_data(ticker)
+                net_shares = insider_df['net_shares_purchased_6m'].iloc[0] if not insider_df.empty else 0
+                
+                conviction_bonus = 0
+                if abs(net_shares) > 1000000 and net_shares > 0: conviction_bonus = 15
+                elif net_shares > 0: conviction_bonus = 5
+                elif abs(net_shares) > 1000000 and net_shares < 0: conviction_bonus = -10
+                elif net_shares < 0: conviction_bonus = -5
+                
+                ticker_df['sim_prob'] = np.clip(ticker_df['ai_prob'] + conviction_bonus, 0, 100)
+            else:
+                ticker_df['sim_prob'] = ticker_df['ai_prob']
+                
+            in_trade = False
+            entry_price = 0
+            take_profit = 0
+            stop_loss = 0
+            entry_date = None
+            days_held = 0
+            
+            for idx, row in ticker_df.iterrows():
+                date = row['date']
+                close = row['close']
+                atr = row['atr_percent']
+                prob = row['sim_prob']
+                macro_safe = row['spy_close'] > row['spy_sma_200']
+                
+                if not in_trade:
+                    # ENTRY
+                    if macro_safe and prob > 60:
+                        in_trade = True
+                        entry_price = close
+                        entry_date = date
+                        take_profit = entry_price * (1 + (atr * 2.0))
+                        stop_loss = entry_price * (1 - (atr * 1.0))
+                        days_held = 0
+                else:
+                    # IN TRADE
+                    days_held += 1
+                    
+                    # Trailing SL
+                    new_sl = close * (1 - (atr * 1.0))
+                    if new_sl > stop_loss: stop_loss = new_sl
+                        
+                    exit_reason = None
+                    if close >= take_profit: exit_reason = "TAKE_PROFIT"
+                    elif close <= stop_loss: exit_reason = "STOP_LOSS"
+                    elif days_held >= 40: exit_reason = "TIME_STOP"
+                        
+                    if exit_reason:
+                        profit_loss = close - entry_price
+                        pl_percent = (profit_loss / entry_price) * 100
+                        trade_history.append({
+                            'Ticker': ticker,
+                            'Entry Date': entry_date,
+                            'Exit Date': date,
+                            'Entry Price': entry_price,
+                            'Exit Price': close,
+                            'Return %': pl_percent,
+                            'Exit Reason': exit_reason,
+                            'Days Held': days_held
+                        })
+                        in_trade = False
+                        
+        status_text.text("Simulation Complete!")
+        
+        if not trade_history:
+            st.warning("No trades were generated during this historical period with the given parameters.")
+        else:
+            res_df = pd.DataFrame(trade_history)
+            res_df = res_df.sort_values('Exit Date')
+            
+            # Analytics
+            total_trades = len(res_df)
+            wins = len(res_df[res_df['Return %'] > 0])
+            losses = len(res_df[res_df['Return %'] <= 0])
+            win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
+            
+            avg_win = res_df[res_df['Return %'] > 0]['Return %'].mean() if wins > 0 else 0
+            avg_loss = res_df[res_df['Return %'] <= 0]['Return %'].mean() if losses > 0 else 0
+            total_return = res_df['Return %'].sum()
+            
+            st.divider()
+            st.markdown("### 📊 Performance Analytics")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total Trades", total_trades)
+            m2.metric("Win Rate", f"{win_rate:.1f}%")
+            m3.metric("Avg Win / Loss", f"+{avg_win:.1f}% / {avg_loss:.1f}%")
+            m4.metric("Gross Return", f"{total_return:+.1f}%")
+            
+            # Equity Curve
+            res_df['Cumulative Return'] = res_df['Return %'].cumsum()
+            res_df['Portfolio Value'] = 10000 * (1 + (res_df['Cumulative Return']/100))
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=res_df['Exit Date'], y=res_df['Portfolio Value'], mode='lines', name='Equity Curve', line=dict(color='#137333', width=3)))
+            fig.update_layout(title="Simulated Portfolio Equity (Starting $10k)", xaxis_title="Date", yaxis_title="Portfolio Value ($)", template="plotly_white", margin=dict(l=0, r=0, t=40, b=0))
+            st.plotly_chart(fig, use_container_width=True)
+            
+            with st.expander("📝 View Raw Trade Log"):
+                st.dataframe(res_df, use_container_width=True)
