@@ -115,8 +115,6 @@ def run_engine():
                 ticker = trade['ticker']
                 tp = trade['take_profit']
                 sl = trade['stop_loss']
-                trade_id = trade['id']
-                
                 # Get latest price
                 live_price_df = conn.execute(f"SELECT close FROM features WHERE ticker = '{ticker}' ORDER BY date DESC LIMIT 1").df()
                 if not live_price_df.empty:
@@ -125,12 +123,12 @@ def run_engine():
                     if current_price >= tp:
                         msg = f"🎯 *AI SELL ALERT (PROFIT)* 🎯\n\n{ticker} hit its Take Profit of ${tp:.2f}. Close your position to secure gains!"
                         send_telegram(msg)
-                        conn.execute(f"UPDATE active_trades SET status = 'CLOSED_WIN', exit_date = CURRENT_TIMESTAMP, exit_price = {current_price} WHERE id = {trade_id}")
+                        conn.execute(f"UPDATE active_trades SET status = 'CLOSED_WIN' WHERE ticker = '{ticker}' AND status = 'ACTIVE'")
                     
                     elif current_price <= sl:
                         msg = f"🛑 *AI SELL ALERT (STOP LOSS)* 🛑\n\n{ticker} hit its Stop Loss of ${sl:.2f}. The AI recommends exiting to preserve capital."
                         send_telegram(msg)
-                        conn.execute(f"UPDATE active_trades SET status = 'CLOSED_LOSS', exit_date = CURRENT_TIMESTAMP, exit_price = {current_price} WHERE id = {trade_id}")
+                        conn.execute(f"UPDATE active_trades SET status = 'CLOSED_LOSS' WHERE ticker = '{ticker}' AND status = 'ACTIVE'")
     except Exception as e:
         print(f"Error checking active portfolio: {e}")
 

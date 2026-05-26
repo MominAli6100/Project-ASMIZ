@@ -73,12 +73,26 @@ SECTORS = {
 
 # --- DATABASE HELPER FUNCTIONS ---
 def refresh_market_data():
-    # The scraping scripts are now fully decoupled and run completely independently 
-    # via the 5-minute GitHub Action cron job. We no longer force Streamlit Cloud's 
-    # 1GB RAM instance to try to execute four massive data pipelines simultaneously.
-    # Streamlit simply fetches the pre-calculated live data from MotherDuck.
     st.cache_data.clear()
-    return True
+    
+    # Execute the scrapers synchronously to bypass GitHub Actions delays
+    import sys
+    import os
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if base_dir not in sys.path:
+        sys.path.append(base_dir)
+        
+    try:
+        from data_ingestion.yfinance_scraper import fetch_and_store_daily_prices
+        from feature_engineering.build_features import generate_features
+        
+        # We don't run fred/whale/insider here as they are slow/daily. Just price data.
+        fetch_and_store_daily_prices()
+        generate_features()
+        return True
+    except Exception as e:
+        st.error(f"Error during manual sync: {e}")
+        return False
 
 def get_latest_data():
     conn = get_db_connection()
