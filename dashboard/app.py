@@ -84,7 +84,6 @@ def get_latest_data():
     conn = get_db_connection()
     query = "SELECT * FROM features WHERE date = (SELECT MAX(date) FROM features) ORDER BY ticker"
     df = conn.execute(query).df()
-    conn.close()
     return df
 
 @st.cache_data(ttl=300)
@@ -93,10 +92,8 @@ def get_historical_data(ticker, days=90):
     query = f"SELECT date, close FROM features WHERE ticker = '{ticker}' ORDER BY date DESC LIMIT {days}"
     try:
         df = conn.execute(query).df()
-        conn.close()
         return df.sort_values('date') # Ascending for plotting
     except:
-        conn.close()
         return pd.DataFrame()
 
 # Portfolio Helpers
@@ -106,7 +103,6 @@ def get_active_trades():
         df = conn.execute("SELECT * FROM active_trades WHERE status = 'ACTIVE'").df()
     except:
         df = pd.DataFrame()
-    conn.close()
     return df
 
 def log_trade(ticker, date, price, tp, sl, quantity=1.0, is_ai_managed=True):
@@ -145,12 +141,10 @@ def log_trade(ticker, date, price, tp, sl, quantity=1.0, is_ai_managed=True):
                 is_ai_managed = excluded.is_ai_managed,
                 status = 'ACTIVE'
         """)
-    conn.close()
 
 def update_stop_loss(ticker, new_sl):
     conn = get_db_connection()
     conn.execute(f"UPDATE active_trades SET stop_loss = {new_sl} WHERE ticker = '{ticker}'")
-    conn.close()
 
 def close_trade_v2(ticker, exit_price):
     conn = get_db_connection()
@@ -163,12 +157,10 @@ def close_trade_v2(ticker, exit_price):
             INSERT INTO closed_trades VALUES ('{ticker}', '{trade[0]}', '{exit_date}', {trade[1]}, {exit_price}, {pl}, {pl_pct}, {trade[2]}, {trade[3]})
         """)
         conn.execute(f"DELETE FROM active_trades WHERE ticker = '{ticker}'")
-    conn.close()
 
 def close_trade(ticker, status):
     conn = get_db_connection()
     conn.execute(f"UPDATE active_trades SET status = '{status}' WHERE ticker = '{ticker}'")
-    conn.close()
 
 # --- NEWS & SENTIMENT HELPER ---
 @st.cache_data(ttl=300) 
@@ -274,7 +266,6 @@ def get_whale_data(ticker):
     except:
         options = pd.DataFrame()
         dark_pools = pd.DataFrame()
-    conn.close()
     return options, dark_pools
 
 @st.cache_data(ttl=300)
@@ -284,7 +275,6 @@ def get_insider_data(ticker):
         df = conn.execute(f"SELECT * FROM insider_trades WHERE ticker = '{ticker}' ORDER BY fetch_date DESC LIMIT 1").df()
     except:
         df = pd.DataFrame()
-    conn.close()
     return df
 
 
@@ -717,7 +707,6 @@ elif st.session_state.main_nav_radio == "📈 Performance Analytics":
         df_closed = conn.execute("SELECT * FROM closed_trades ORDER BY exit_date DESC").df()
     except:
         df_closed = pd.DataFrame()
-    conn.close()
     
     if df_closed.empty:
         st.info("No closed trades yet. Follow the AI, take the signals, and build your statistical edge.")
@@ -780,7 +769,6 @@ elif st.session_state.main_nav_radio == "📈 Performance Analytics":
                     # Handle pandas timestamp to string formatting for SQL
                     entry_date_str = pd.to_datetime(row['entry_date']).strftime('%Y-%m-%d %H:%M:%S')
                     conn.execute(f"DELETE FROM closed_trades WHERE ticker='{ticker}' AND entry_date='{entry_date_str}'")
-                conn.close()
                 st.success("Trades successfully purged from the ledger.")
                 st.rerun()
 
@@ -992,7 +980,6 @@ elif st.session_state.main_nav_radio == "⏪ Backtest Simulator":
     def get_date_range():
         conn = get_db_connection()
         res = conn.execute("SELECT MIN(date) as min_d, MAX(date) as max_d FROM features").df()
-        conn.close()
         return pd.to_datetime(res['min_d'].iloc[0]).date(), pd.to_datetime(res['max_d'].iloc[0]).date()
         
     min_db_date, max_db_date = get_date_range()
@@ -1038,7 +1025,6 @@ elif st.session_state.main_nav_radio == "⏪ Backtest Simulator":
         
         hist_df = conn.execute(f"SELECT * FROM features WHERE date >= '{start_str}' AND date <= '{end_str}' ORDER BY date ASC").df()
         spy_df = conn.execute(f"SELECT date, close FROM features WHERE ticker = 'SPY' AND date >= '{start_str}' AND date <= '{end_str}' ORDER BY date ASC").df()
-        conn.close()
         
         if hist_df.empty:
             st.error(f"No data available for the selected date range ({start_str} to {end_str}).")
