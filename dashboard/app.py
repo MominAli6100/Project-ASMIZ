@@ -80,7 +80,6 @@ def refresh_market_data():
     st.cache_data.clear()
     return True
 
-@st.cache_data(ttl=60)
 def get_latest_data():
     conn = get_db_connection()
     query = "SELECT * FROM features WHERE date = (SELECT MAX(date) FROM features) ORDER BY ticker"
