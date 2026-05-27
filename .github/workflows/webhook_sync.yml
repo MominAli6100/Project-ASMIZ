@@ -18,7 +18,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install yfinance duckdb pandas numpy requests
+          pip install yfinance duckdb pandas numpy requests joblib scikit-learn xgboost
 
       - name: Run Market Data Scraper
         run: |
@@ -29,5 +29,8 @@ jobs:
           python feature_engineering/build_features.py
 
       - name: Execute Telegram Engine
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python notification_engine.py
