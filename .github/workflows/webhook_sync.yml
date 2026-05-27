@@ -21,21 +21,13 @@ jobs:
           pip install yfinance duckdb pandas numpy requests
 
       - name: Run Market Data Scraper
-        env:
-          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
         run: |
           python data_ingestion/yfinance_scraper.py
 
       - name: Re-calculate AI Features
-        env:
-          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
         run: |
           python feature_engineering/build_features.py
 
       - name: Execute Telegram Engine
-        env:
-          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python notification_engine.py
