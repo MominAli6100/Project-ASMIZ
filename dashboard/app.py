@@ -85,14 +85,50 @@ def refresh_market_data():
     try:
         from data_ingestion.yfinance_scraper import fetch_and_store_daily_prices
         from feature_engineering.build_features import generate_features
+        from notification_engine import run_engine
         
-        # We don't run fred/whale/insider here as they are slow/daily. Just price data.
+        # We don't run fred/whale/insider here as they are slow/daily. Just price data & alerts.
         fetch_and_store_daily_prices()
         generate_features()
+        run_engine()
         return True
     except Exception as e:
         st.error(f"Error during manual sync: {e}")
         return False
+
+# CRON-JOB.ORG SECURE BACKDOOR
+# If cron-job.org visits ?sync=PASSWORD, forcefully sync the database and exit instantly.
+cron_pass = st.query_params.get("sync")
+try:
+    expected_pass = st.secrets["CRON_PASSWORD"]
+except:
+    expected_pass = None
+
+if cron_pass and expected_pass and cron_pass == expected_pass:
+    import time
+    sync_file = os.path.join(os.path.dirname(__file__), 'last_sync.txt')
+    current_time = time.time()
+    
+    # 4-minute cooldown (240 seconds)
+    can_sync = True
+    if os.path.exists(sync_file):
+        with open(sync_file, 'r') as f:
+            last_sync = float(f.read().strip() or 0)
+        if current_time - last_sync < 240:
+            can_sync = False
+            
+    if can_sync:
+        with open(sync_file, 'w') as f:
+            f.write(str(current_time))
+        success = refresh_market_data()
+        if success:
+            st.write("Cron Sync Successful")
+        else:
+            st.write("Cron Sync Failed")
+    else:
+        st.write("Rate limit exceeded. Try again later.")
+        
+    st.stop()
 
 def get_latest_data():
     conn = get_db_connection()
