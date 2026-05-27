@@ -18,7 +18,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install yfinance duckdb pandas numpy requests joblib scikit-learn xgboost
+          pip install yfinance duckdb==1.5.2 pandas numpy requests joblib scikit-learn xgboost
 
       - name: Run Market Data Scraper
         run: |
