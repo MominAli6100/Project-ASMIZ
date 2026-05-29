@@ -22,17 +22,6 @@ def fetch_and_store_daily_prices():
 
     conn = duckdb.connect(f'md:?motherduck_token={os.environ.get("MOTHERDUCK_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6Im1vbWluYWxpMDVAZ21haWwuY29tIiwibWRSZWdpb24iOiJhd3MtdXMtZWFzdC0xIiwic2Vzc2lvbiI6Im1vbWluYWxpMDUuZ21haWwuY29tIiwicGF0IjoibGRwVDBFR2Y4RXFjQjNjWGF0Uko5YXNNYkVwT0hiMXBTNmpiMFdUTzB2ayIsInVzZXJJZCI6IjcxYWRlNjBmLTI2ZDctNGE1MS1iMzkwLTVhYzEzMjUxYjcwYiIsImlzcyI6Im1kX3BhdCIsInJlYWRPbmx5IjpmYWxzZSwidG9rZW5UeXBlIjoicmVhZF93cml0ZSIsImlhdCI6MTc3OTQ2ODI0MX0.6AveIjL-8OfXm3t0Ygfe9QT2d9z2bszjPWLuILI2fns")}')
     
-    print("Fetching live sub-minute prices to guarantee real-time synchronization...")
-    from datetime import datetime
-    try:
-        live_df = yf.download(ALL_TICKERS, period="1d", interval="1m", progress=False)
-        if isinstance(live_df.columns, pd.MultiIndex):
-            live_df = live_df['Close']
-        live_prices = {t: live_df[t].dropna().iloc[-1] for t in ALL_TICKERS if t in live_df.columns and not live_df[t].dropna().empty}
-    except Exception as e:
-        print("Failed to fetch bulk live prices:", e)
-        live_prices = {}
-        
     for ticker in ALL_TICKERS:
         print(f"Fetching data for {ticker}...")
         
@@ -69,12 +58,6 @@ def fetch_and_store_daily_prices():
             'Date': 'date', 'Open': 'open', 'High': 'high', 'Low': 'low', 
             'Close': 'close', 'Volume': 'volume', 'Ticker': 'ticker'
         })
-        
-        if ticker in live_prices:
-            last_dt = pd.to_datetime(df['date'].iloc[-1]).date()
-            if last_dt == datetime.now().date():
-                df.iloc[-1, df.columns.get_loc('close')] = float(live_prices[ticker])
-
         
         # UPSERT logic so we don't duplicate overlapping 5 days
         conn.execute("""

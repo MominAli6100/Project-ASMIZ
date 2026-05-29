@@ -5,9 +5,9 @@ import joblib
 import os
 import subprocess
 import sys
+import yfinance as yf
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-import yfinance as yf
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from streamlit_autorefresh import st_autorefresh
 import feedparser
@@ -138,6 +138,25 @@ def get_latest_data():
     df = conn.execute(query).df()
     conn.close()
     return df
+
+@st.cache_data(ttl=300)
+def fetch_live_prices():
+    """Fetch real-time live prices from yfinance (1-minute interval). Used for DISPLAY ONLY — does not affect the AI algorithm."""
+    try:
+        live_df = yf.download(ALL_TICKERS, period="1d", interval="1m", progress=False)
+        if isinstance(live_df.columns, pd.MultiIndex):
+            close_df = live_df['Close']
+        else:
+            close_df = live_df
+        prices = {}
+        for t in ALL_TICKERS:
+            if t in close_df.columns:
+                col = close_df[t].dropna()
+                if not col.empty:
+                    prices[t] = float(col.iloc[-1])
+        return prices
+    except Exception as e:
+        return {}
 
 @st.cache_data(ttl=300)
 def get_historical_data(ticker, days=90):
@@ -456,6 +475,9 @@ if df_latest.empty:
 
 latest_date = df_latest['date'].iloc[0]
 
+# Fetch LIVE prices for display (separate from algorithm)
+live_prices = fetch_live_prices()
+
 spy_close = df_latest['spy_close'].iloc[0]
 spy_sma = df_latest['spy_sma_200'].iloc[0]
 macro_safe = spy_close > spy_sma
@@ -516,10 +538,12 @@ if st.session_state.main_nav_radio == "📊 Simple Action View":
         else:
             ai_prob = 0
             
-        entry_price = row['close']
+        # Use LIVE price for display, but keep DB close for algorithm calculations (TP/SL)
+        algo_price = row['close']  # Algorithm uses DB close price
+        entry_price = live_prices.get(ticker, algo_price)  # Display uses live price
         atr = row['atr_percent']
-        take_profit = entry_price * (1 + (atr * 2.0))
-        stop_loss = entry_price * (1 - (atr * 1.0))
+        take_profit = algo_price * (1 + (atr * 2.0))
+        stop_loss = algo_price * (1 - (atr * 1.0))
         
         # Dynamic Time Barrier Calculation
         momentum_per_day = abs(row['return_5d']) / 5.0
@@ -669,7 +693,7 @@ elif st.session_state.main_nav_radio == "💼 Active Portfolio":
             live_row = df_latest[df_latest['ticker'] == ticker]
             if live_row.empty: continue
             
-            live_price = live_row['close'].iloc[0]
+            live_price = live_prices.get(ticker, live_row['close'].iloc[0])
             atr = live_row['atr_percent'].iloc[0]
             
             profit_loss_per_share = live_price - entry_price
@@ -923,10 +947,11 @@ elif st.session_state.main_nav_radio == "🕵️ Insider Alpha (V2)":
         else:
             ai_prob = 0
             
-        entry_price = row['close']
+        algo_price = row['close']
+        entry_price = live_prices.get(ticker, algo_price)
         atr = row['atr_percent']
-        take_profit = entry_price * (1 + (atr * 2.0))
-        stop_loss = entry_price * (1 - (atr * 1.0))
+        take_profit = algo_price * (1 + (atr * 2.0))
+        stop_loss = algo_price * (1 - (atr * 1.0))
         
         # Pull Insider Data
         insider_df = get_insider_data(ticker)
