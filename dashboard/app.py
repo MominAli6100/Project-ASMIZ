@@ -134,7 +134,6 @@ if cron_pass and expected_pass and cron_pass == expected_pass:
 @st.cache_data(ttl=300)
 def get_latest_data():
     conn = get_db_connection()
-    conn.execute("CLEAR CACHE")
     query = "SELECT * FROM features WHERE date = (SELECT MAX(date) FROM features) ORDER BY ticker"
     df = conn.execute(query).df()
     conn.close()
@@ -143,7 +142,6 @@ def get_latest_data():
 @st.cache_data(ttl=300)
 def get_historical_data(ticker, days=90):
     conn = get_db_connection()
-    conn.execute("CLEAR CACHE")
     query = f"SELECT date, close FROM features WHERE ticker = '{ticker}' ORDER BY date DESC LIMIT {days}"
     try:
         df = conn.execute(query).df()
@@ -156,7 +154,6 @@ def get_historical_data(ticker, days=90):
 # Portfolio Helpers
 def get_active_trades():
     conn = get_db_connection()
-    conn.execute("CLEAR CACHE")
     try:
         df = conn.execute("SELECT * FROM active_trades WHERE status = 'ACTIVE'").df()
     except:
@@ -320,7 +317,6 @@ def get_live_news(ticker):
 @st.cache_data(ttl=300)
 def get_whale_data(ticker):
     conn = get_db_connection()
-    conn.execute("CLEAR CACHE")
     try:
         options = conn.execute(f"SELECT * FROM options_flow WHERE ticker = '{ticker}' ORDER BY volume DESC LIMIT 5").df()
         dark_pools = conn.execute(f"SELECT * FROM dark_pool_blocks WHERE ticker = '{ticker}' ORDER BY datetime DESC LIMIT 3").df()
@@ -333,7 +329,6 @@ def get_whale_data(ticker):
 @st.cache_data(ttl=300)
 def get_insider_data(ticker):
     conn = get_db_connection()
-    conn.execute("CLEAR CACHE")
     try:
         df = conn.execute(f"SELECT * FROM insider_trades WHERE ticker = '{ticker}' ORDER BY fetch_date DESC LIMIT 1").df()
     except:
