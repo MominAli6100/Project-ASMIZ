@@ -74,6 +74,7 @@ SECTORS = {
 # --- DATABASE HELPER FUNCTIONS ---
 def refresh_market_data():
     st.cache_data.clear()
+    st.cache_resource.clear()
     
     # Execute the scrapers synchronously to bypass GitHub Actions delays
     import sys
@@ -130,29 +131,37 @@ if cron_pass and expected_pass and cron_pass == expected_pass:
         
     st.stop()
 
+@st.cache_data(ttl=300)
 def get_latest_data():
     conn = get_db_connection()
+    conn.execute("CLEAR CACHE")
     query = "SELECT * FROM features WHERE date = (SELECT MAX(date) FROM features) ORDER BY ticker"
     df = conn.execute(query).df()
+    conn.close()
     return df
 
 @st.cache_data(ttl=300)
 def get_historical_data(ticker, days=90):
     conn = get_db_connection()
+    conn.execute("CLEAR CACHE")
     query = f"SELECT date, close FROM features WHERE ticker = '{ticker}' ORDER BY date DESC LIMIT {days}"
     try:
         df = conn.execute(query).df()
+        conn.close()
         return df.sort_values('date') # Ascending for plotting
     except:
+        if conn: conn.close()
         return pd.DataFrame()
 
 # Portfolio Helpers
 def get_active_trades():
     conn = get_db_connection()
+    conn.execute("CLEAR CACHE")
     try:
         df = conn.execute("SELECT * FROM active_trades WHERE status = 'ACTIVE'").df()
     except:
         df = pd.DataFrame()
+    conn.close()
     return df
 
 def log_trade(ticker, date, price, tp, sl, quantity=1.0, is_ai_managed=True):
@@ -308,23 +317,28 @@ def get_live_news(ticker):
         
     return final_news[:8]
 
+@st.cache_data(ttl=300)
 def get_whale_data(ticker):
     conn = get_db_connection()
+    conn.execute("CLEAR CACHE")
     try:
         options = conn.execute(f"SELECT * FROM options_flow WHERE ticker = '{ticker}' ORDER BY volume DESC LIMIT 5").df()
         dark_pools = conn.execute(f"SELECT * FROM dark_pool_blocks WHERE ticker = '{ticker}' ORDER BY datetime DESC LIMIT 3").df()
     except:
         options = pd.DataFrame()
         dark_pools = pd.DataFrame()
+    conn.close()
     return options, dark_pools
 
 @st.cache_data(ttl=300)
 def get_insider_data(ticker):
     conn = get_db_connection()
+    conn.execute("CLEAR CACHE")
     try:
         df = conn.execute(f"SELECT * FROM insider_trades WHERE ticker = '{ticker}' ORDER BY fetch_date DESC LIMIT 1").df()
     except:
         df = pd.DataFrame()
+    conn.close()
     return df
 
 
